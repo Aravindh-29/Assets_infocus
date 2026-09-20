@@ -240,10 +240,10 @@ The full `sudo bash install.sh` installation creates the first administrator aut
 
 | Login field        | Initial value |
 | ------------------ | ------------- |
-| Username           | `amdin`       |
+| Username           | `admin`       |
 | Temporary password | `Admin@123`   |
 
-The username is **`amdin`**, exactly as shown. Sign in at [https://assets.infocuscs.com/login](https://assets.infocuscs.com/login) after installation succeeds. You must change the temporary password before using the application. The replacement password must contain at least 10 characters, including uppercase, lowercase, a number, and a symbol, and fit within bcrypt's 72-byte limit.
+The username is **`admin`**, exactly as shown. Sign in at [https://assets.infocuscs.com/login](https://assets.infocuscs.com/login) after installation succeeds. You must change the temporary password before using the application. The replacement password must contain at least 10 characters, including uppercase, lowercase, a number, and a symbol, and fit within bcrypt's 72-byte limit.
 
 Rerunning the installer preserves every existing administrator and password, including disabled administrators; it does not reset them to these defaults. An existing administrator means no new account is created. Username or reserved-email conflicts stop setup without taking over an existing account. The standalone `setup-db.sh`/`setup-db.mjs` database helper creates no application account or demo data.
 

@@ -189,7 +189,7 @@ test(
             const before = await snapshot();
             assert.equal(await ensureInstallerAdmin(db), 'existing-admin');
             assert.equal(await snapshot(), before);
-            assert.equal(await db.user.count({ where: { username: 'amdin' } }), 0);
+            assert.equal(await db.user.count({ where: { username: 'admin' } }), 0);
           } finally {
             await db.user.delete({ where: { id: existing.id } });
           }
@@ -199,7 +199,7 @@ test(
       await t.test(
         'case-insensitive username collision refuses bootstrap without changing any records',
         async () => {
-          const existing = await fixtureUser({ username: 'AMDiN' });
+          const existing = await fixtureUser({ username: 'ADMiN' });
           try {
             const before = await snapshot();
             await assert.rejects(ensureInstallerAdmin(db), InstallerAdminConflict);
@@ -214,7 +214,7 @@ test(
       await t.test(
         'reserved email and ambiguous email identifier collisions are refused without modifications',
         async () => {
-          for (const email of ['AMDIN@INFOCUS.INVALID', 'AMDiN']) {
+          for (const email of ['ADMIN@INFOCUS.INVALID', 'ADMiN']) {
             // The second fixture represents legacy direct database data, not a valid new user API request.
             const existing = await fixtureUser({ email, username: 'another-user' });
             try {
@@ -234,7 +234,7 @@ test(
         async () => {
           const existing = await db.employee.create({
             data: {
-              employeeId: 'AMDIN',
+              employeeId: 'ADMIN',
               name: 'Employee identifier fixture',
               email: 'employee@example.invalid',
             },
@@ -257,8 +257,8 @@ test(
           assert.deepEqual(results.sort(), ['created', 'existing-admin']);
           assert.equal(await db.user.count(), 1);
           bootstrapUser = await db.user.findFirstOrThrow();
-          assert.equal(bootstrapUser.username, 'amdin');
-          assert.equal(bootstrapUser.email, 'amdin@infocus.invalid');
+          assert.equal(bootstrapUser.username, 'admin');
+          assert.equal(bootstrapUser.email, 'admin@infocus.invalid');
           assert.equal(bootstrapUser.role, 'ADMIN');
           assert.equal(bootstrapUser.active, true);
           assert.equal(bootstrapUser.mustChangePassword, true);
@@ -288,7 +288,7 @@ test(
       await t.test(
         'username login accepts trimmed mixed case, rejects wrong credentials, and gates protected routes',
         async () => {
-          for (const identifier of ['amdin', '  AMDiN  ', installerAdmin.email]) {
+          for (const identifier of ['admin', '  ADMiN  ', installerAdmin.email]) {
             const result = await login(identifier);
             assert.equal(result.status, 200);
             assert.equal(result.body.data.user.id, bootstrapUser.id);
@@ -298,8 +298,8 @@ test(
             assert.equal(typeof token, 'string');
           }
           for (const [identifier, password] of [
-            ['amdin', 'wrong-password'],
-            ['admin', installerAdmin.password],
+            ['admin', 'wrong-password'],
+            ['unknown-admin', installerAdmin.password],
           ]) {
             const result = await login(identifier, password);
             assert.equal(result.status, 401);
@@ -309,17 +309,17 @@ test(
           // Existing username identity must win if later legacy data introduces an ambiguous identifier.
           const shadowEmployee = await db.employee.create({
             data: {
-              employeeId: 'amdin',
+              employeeId: 'admin',
               name: 'Later employee fixture',
               email: 'later-employee@example.invalid',
             },
           });
-          const shadow = await fixtureUser({ email: 'amdin', employeeId: shadowEmployee.id });
+          const shadow = await fixtureUser({ email: 'admin', employeeId: shadowEmployee.id });
           try {
-            const preferred = await login('amdin');
+            const preferred = await login('admin');
             assert.equal(preferred.status, 200);
             assert.equal(preferred.body.data.user.id, bootstrapUser.id);
-            assert.equal((await login('amdin', 'Fixture-existing@12345')).status, 401);
+            assert.equal((await login('admin', 'Fixture-existing@12345')).status, 401);
           } finally {
             await db.user.delete({ where: { id: shadow.id } });
             await db.employee.delete({ where: { id: shadowEmployee.id } });
@@ -364,8 +364,8 @@ test(
           const before = await snapshot();
           assert.equal(await ensureInstallerAdmin(db), 'existing-admin');
           assert.equal(await snapshot(), before);
-          assert.equal((await login('amdin', newPassword)).status, 200);
-          assert.equal((await login('amdin', 'Admin@123')).status, 401);
+          assert.equal((await login('admin', newPassword)).status, 200);
+          assert.equal((await login('admin', 'Admin@123')).status, 401);
           assert.equal(await db.auditLog.count({ where: { action: 'ADMIN_BOOTSTRAPPED' } }), 1);
           assert.equal(await db.auditLog.count({ where: { action: 'PASSWORD_CHANGED' } }), 1);
           const auditText = JSON.stringify(await db.auditLog.findMany());
@@ -382,7 +382,7 @@ test(
           assert.equal(await ensureInstallerAdmin(db), 'existing-admin');
           assert.equal(await snapshot(), before);
           assert.equal(await db.user.count(), 1);
-          assert.equal((await login('amdin', 'Changed-installer@12345')).status, 401);
+          assert.equal((await login('admin', 'Changed-installer@12345')).status, 401);
           const installer = spawnSync(
             process.execPath,
             ['--import', 'tsx', path.join(root, 'backend/scripts/bootstrap-installer-admin.ts')],

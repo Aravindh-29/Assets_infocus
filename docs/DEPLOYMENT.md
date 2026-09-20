@@ -78,7 +78,7 @@ The installer:
 4. Creates the application database when missing, or reuses a compatible existing database; applies committed migrations and checks tables, constraints, indexes, and history protections.
 5. Separates the schema owner used for migrations from the restricted database login used by the running API.
 6. Installs dependencies from the lockfile and builds both workspaces.
-7. Creates the first administrator only if no administrator exists, using username `amdin` and temporary password `Admin@123`, with a mandatory first-login password change.
+7. Creates the first administrator only if no administrator exists, using username `admin` and temporary password `Admin@123`, with a mandatory first-login password change.
 8. Configures systemd and its own Nginx server block, then validates Nginx before reloading it.
 9. Checks database-backed API health and the frontend/API routes through Nginx, including before public DNS resolves, and prints the new administrator credentials after successful verification.
 
@@ -161,10 +161,10 @@ The full installer performs this step automatically if no user has the `ADMIN` r
 
 | Login field        | Initial value |
 | ------------------ | ------------- |
-| Username           | `amdin`       |
+| Username           | `admin`       |
 | Temporary password | `Admin@123`   |
 
-Use the exact spelling **`amdin`**. The application requires you to replace the temporary password before accessing its features. The replacement must contain at least 10 characters, uppercase and lowercase letters, a number, and a symbol, and fit within bcrypt's 72-byte limit. The initial account uses reserved placeholder email `amdin@infocus.invalid`; this address cannot receive password-reset messages. Email recovery requires a deliverable account address and configured SMTP.
+Use the exact spelling **`admin`**. The application requires you to replace the temporary password before accessing its features. The replacement must contain at least 10 characters, uppercase and lowercase letters, a number, and a symbol, and fit within bcrypt's 72-byte limit. The initial account uses reserved placeholder email `admin@infocus.invalid`; this address cannot receive password-reset messages. Email recovery requires a deliverable account address and configured SMTP.
 
 On every rerun, any existing administrator, including a disabled administrator, causes automatic account creation to be skipped. Passwords, account status, and first-login password-change state are left unchanged. The installer cannot be used to reset a forgotten password or reactivate an account. If an earlier attempt created this administrator but failed a later deployment check, rerunning retains that same account and its current password. An unrelated account or employee using the reserved identifier causes a clear failure rather than an account takeover.
 

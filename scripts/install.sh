@@ -64,7 +64,7 @@ After adding DNS, rerun with --letsencrypt. Existing trusted certificates persis
 Reruns preserve credentials, migrate forward, build a new release, and restart the app.
 The database is asset_management; dedicated roles are infocus_assets_owner and infocus_assets.
 No sample inventory is created. With no administrator, setup creates username
-amdin and temporary password Admin@123, requiring a password change at first login.
+admin and temporary password Admin@123, requiring a password change at first login.
 Existing administrators and passwords are preserved on reruns.
 HELP
 }
@@ -445,7 +445,7 @@ chmod -R a+rX,go-w "$RELEASE"
 info 'Ensuring the first administrator exists without changing existing accounts.'
 ADMIN_BOOTSTRAP_STATUS=$(runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" "$NODE" --env-file="$ENV_FILE" "$RELEASE/node_modules/tsx/dist/cli.mjs" "$RELEASE/backend/scripts/bootstrap-installer-admin.ts")
 case "$ADMIN_BOOTSTRAP_STATUS" in
-  created) info 'Created installer administrator amdin; a password change is required at first login.';;
+  created) info 'Created installer administrator admin; a password change is required at first login.';;
   existing-admin) info 'An administrator already exists; existing accounts and passwords were preserved.';;
   *) die 'Unexpected administrator setup result; installation stopped before switching the running release.';;
 esac
@@ -651,7 +651,7 @@ if [[ "$CERT" == "$TLS_DIR/cert.pem" ]]; then
   printf 'HTTPS currently uses a self-signed certificate. After DNS, rerun sudo bash install.sh and choose trusted HTTPS. No email is required.\n'
 fi
 if [[ "$ADMIN_BOOTSTRAP_STATUS" == created ]]; then
-  printf '\nAdministrator login: https://%s/login\nUsername: amdin\nTemporary password: Admin@123\nChange this password when prompted at first login.\n' "$DOMAIN"
+  printf '\nAdministrator login: https://%s/login\nUsername: admin\nTemporary password: Admin@123\nChange this password when prompted at first login.\n' "$DOMAIN"
 else
   printf '\nUse your existing administrator login. The installer did not reset any password.\n'
 fi

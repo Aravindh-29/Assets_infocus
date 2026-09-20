@@ -166,7 +166,7 @@ For an installer-managed server, prefer rerunning `scripts/install.sh` from the 
 
 ## First production administrator
 
-The full Ubuntu/Debian installer automatically creates the first administrator after applying and verifying migrations, only if no administrator exists. Its login is username **`amdin`** and temporary password **`Admin@123`**. A password change is required at first login. The account has placeholder email `amdin@infocus.invalid`, which cannot receive password-reset messages; email recovery requires a deliverable account address and configured SMTP.
+The full Ubuntu/Debian installer automatically creates the first administrator after applying and verifying migrations, only if no administrator exists. Its login is username **`admin`** and temporary password **`Admin@123`**. A password change is required at first login. The account has placeholder email `admin@infocus.invalid`, which cannot receive password-reset messages; email recovery requires a deliverable account address and configured SMTP.
 
 Installer reruns preserve existing administrators and passwords, including disabled accounts. They neither reset passwords nor create another administrator when any administrator already exists. A reserved-username/email or employee-ID collision fails without altering that account. Creation and its audit record run in one transaction, with a database advisory lock shared with manual first-admin creation to serialize concurrent attempts.
 

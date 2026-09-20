@@ -4,9 +4,9 @@ import bcrypt from 'bcryptjs';
 // Explicit first-install credentials requested for this deployment. The normal
 // password policy still applies when this temporary password is changed.
 export const installerAdmin = {
-  username: 'amdin',
+  username: 'admin',
   password: 'Admin@123',
-  email: 'amdin@infocus.invalid',
+  email: 'admin@infocus.invalid',
   name: 'INFOCUS Administrator',
 } as const;
 
