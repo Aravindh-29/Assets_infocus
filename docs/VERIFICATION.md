@@ -85,4 +85,24 @@ python3 scripts/tests/nginx-routing.test.py
 
 The Nginx test extracts the installer's actual server-block template, uses a temporary certificate and files, launches its own Nginx process on temporary loopback ports, and removes the fixtures afterward. It does not edit `/etc/nginx` or restart the system Nginx service.
 
-These checks do not constitute a full server installation. Package installation, systemd provisioning, public DNS, Let's Encrypt issuance/renewal, and the complete installer upgrade/rollback flow still need verification on the intended Ubuntu/Debian server. Existing application-suite results above were not rerun for these documentation and setup-script changes.
+These checks do not constitute a full server installation. Systemd provisioning, Let's Encrypt issuance/renewal for INFOCUS, and the complete installer upgrade/rollback flow still need verification during deployment. Existing application-suite results above were not rerun for these documentation and setup-script changes.
+
+## Shared-server verification
+
+On 21 September 2026, performed an authorized read-only SSH inspection of the intended INFOCUS server and ran the hardened installer's `--check` mode for `assets.infocuscs.com`, API port 5002, and PostgreSQL port 5432. No installation was performed.
+
+| Check                             | Result                                                                                                                                   |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| Existing SERV-IT site             | HTTP 200, valid TLS; existing API uses 5000                                                                                              |
+| Existing Grow Together site       | HTTP 200, valid TLS; existing API uses 5001                                                                                              |
+| New hostname                      | DNS resolves to the inspected server                                                                                                     |
+| Host                              | Ubuntu 26.04; active Nginx 1.28; existing PostgreSQL 18 on 5432                                                                          |
+| INFOCUS preflight                 | Passed; API port 5002 available; application paths/database/roles unused                                                                 |
+| Shared Node                       | Existing Node 20 retained; installer plans a separate private Node 22                                                                    |
+| Build resources                   | About 2.6 GiB memory available and 20 GiB free disk at inspection                                                                        |
+| Existing-host conflict refusal    | Preflight rejected SERV-IT's hostname without modifying it                                                                               |
+| Before/after comparison           | Same service PIDs/start times, Nginx configuration hashes, database names/owners and INFOCUS namespace                                   |
+| Shared Certbot renewal            | Existing timer active/enabled; unchanged                                                                                                 |
+| Isolated two-app Nginx regression | Passed; existing HTTP/HTTPS apps and IPv4/IPv6 implicit defaults retained after adding INFOCUS and gracefully reloading; same master PID |
+
+The updated installer requires installed system prerequisites, avoids OS package changes/shared-service startup or boot enablement, appends its enabled site after existing sites, and bounds build resources. The isolated Nginx fixture mirrors the existing host's IPv4/IPv6 routing arrangement. Actual deployment will still create INFOCUS resources and gracefully reload Nginx; runtime capacity, certificate issuance, and application workflows must be checked after deployment. Rerun `--check` immediately before installing because server state can change.

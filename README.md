@@ -200,25 +200,26 @@ The database-setup script also has an opt-in PostgreSQL test suite, enabled with
 Copy or clone this repository onto the server. From its root, inspect the plan first:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.company.com --dry-run
-sudo bash scripts/install.sh --domain assets.company.com
+sudo bash scripts/install.sh --domain assets.infocuscs.com --dry-run
+sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 --check
+sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
 ```
 
-Replace `assets.company.com` with the hostname you will configure in DNS. The installer reuses an existing local PostgreSQL installation, creates the application database if needed, applies and verifies migrations, builds the app, installs a systemd service, and adds its own Nginx site. On a new install it can choose another available internal API port if 5000 is busy. It preserves existing unrelated Nginx sites and does not seed demo users.
+The INFOCUS hostname is `assets.infocuscs.com`. On the shared server, existing applications use ports 5000 and 5001; the commands above select 5002. `--check` inspects the live server without deploying or changing services. The installer requires existing system dependencies and running Nginx/PostgreSQL; it does not install OS packages or start/restart those shared services. It creates the separate application database if needed, verifies migrations, builds the app with resource limits, and adds its own systemd service and Nginx site. If necessary on a first install, it can choose the next free API port.
 
 The application is served at the domain root, with `/api` routed to the loopback API:
 
 ```text
-https://assets.company.com/       → built React application
-https://assets.company.com/api/   → http://127.0.0.1:<selected-port>/api/
+https://assets.infocuscs.com/       → built React application
+https://assets.infocuscs.com/api/   → http://127.0.0.1:<selected-port>/api/
 ```
 
-The Nginx configuration is `/etc/nginx/sites-available/infocus-assets.conf`, enabled from `/etc/nginx/sites-enabled/infocus-assets.conf`. This is a dedicated hostname deployment; a subpath such as `/asset-management/` is not configured.
+The Nginx configuration is `/etc/nginx/sites-available/infocus-assets.conf`, enabled from `/etc/nginx/sites-enabled/zz-infocus-assets.conf`. The installer requires that enabled link to sort after the existing sites, preserving their implicit default-host order, and validates Nginx before a graceful reload. This is a dedicated hostname deployment; a subpath such as `/asset-management/` is not configured. See the [shared-server safeguards](docs/DEPLOYMENT.md#shared-server-safeguards) before installation.
 
 Initially the installer uses a self-signed HTTPS certificate so installation and local routing checks can finish before DNS is ready. After you add the domain's A record (and an AAAA record only if the server has working IPv6), allow inbound ports 80/443 and request a trusted certificate:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.company.com \
+sudo bash scripts/install.sh --domain assets.infocuscs.com \
   --letsencrypt --email admin@company.com
 ```
 

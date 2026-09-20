@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import socket
 import subprocess
 import tempfile
@@ -59,7 +60,8 @@ def main():
             (challenge / "fixture").write_text("challenge-ok")
             cert, key = work / "cert.pem", work / "key.pem"
             run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
-                "-subj", "/CN=assets.example.test", "-addext", "subjectAltName=DNS:assets.example.test",
+                "-subj", "/CN=assets.example.test", "-addext",
+                "subjectAltName=DNS:assets.example.test,DNS:first.example.test,DNS:second.example.test,DNS:unknown.example.test",
                 "-keyout", str(key), "-out", str(cert))
             env = {**os.environ, "MARKER": "# Test fixture", "DOMAIN": "assets.example.test",
                    "ROOT": str(root), "CERT": str(cert), "KEY": str(key), "PORT": str(api.server_port)}
@@ -67,7 +69,28 @@ def main():
             http_port, https_port = available_port(), available_port()
             site = site.replace("listen 80;", f"listen 127.0.0.1:{http_port};")
             site = site.replace("listen 443 ssl;", f"listen 127.0.0.1:{https_port} ssl;")
-            site = site.replace("listen [::]:80;", "").replace("listen [::]:443 ssl;", "")
+            site = site.replace("listen [::]:80;", f"listen [::1]:{http_port};")
+            site = site.replace("listen [::]:443 ssl;", f"listen [::1]:{https_port} ssl;")
+            enabled = work / "sites-enabled"
+            enabled.mkdir()
+            for filename, host, body, ipv6 in [
+                ("growtogether", "first.example.test", "EXISTING-FIRST", False),
+                ("servit", "second.example.test", "EXISTING-SECOND", True),
+            ]:
+                blocks = []
+                for port, secure in [(http_port, False), (https_port, True)]:
+                    suffix = " ssl" if secure else ""
+                    listeners = f"listen 127.0.0.1:{port}{suffix};"
+                    if ipv6:
+                        listeners += f"listen [::1]:{port}{suffix};"
+                    blocks.append(f"""server {{
+                        {listeners}
+                        server_name {host};
+                        ssl_certificate {cert};
+                        ssl_certificate_key {key};
+                        location / {{ return 200 '{body}'; }}
+                    }}""")
+                (enabled / filename).write_text("\n".join(blocks))
             config = work / "nginx.conf"
             config.write_text(f"""pid {work}/nginx.pid;
 error_log {work}/error.log;
@@ -80,7 +103,7 @@ http {{
   fastcgi_temp_path {work}/fastcgi;
   uwsgi_temp_path {work}/uwsgi;
   scgi_temp_path {work}/scgi;
-  {site}
+  include {enabled}/*;
 }}
 """)
             run("nginx", "-t", "-p", str(work), "-c", str(config))
@@ -96,14 +119,39 @@ http {{
                 else:
                     raise AssertionError("Isolated Nginx did not start: " + (work / "error.log").read_text())
 
-                def request(route, secure=True):
+                def request(route, secure=True, host="assets.example.test", ipv6=False):
                     port = https_port if secure else http_port
                     scheme = "https" if secure else "http"
                     response = run("curl", "--silent", "--show-error", "--max-time", "5", "--noproxy", "*",
-                                   "--cacert", str(cert), "--resolve", f"assets.example.test:{port}:127.0.0.1",
-                                   "-w", "\n%{http_code}", f"{scheme}://assets.example.test:{port}{route}").stdout
+                                   "--cacert", str(cert), "--resolve", f"{host}:{port}:" + ("[::1]" if ipv6 else "127.0.0.1"),
+                                   "-w", "\n%{http_code}", f"{scheme}://{host}:{port}{route}").stdout
                     return response.rsplit("\n", 1)
 
+                baselines = {}
+                for secure in (False, True):
+                    for host, ipv6, expected in [
+                        ("first.example.test", False, "EXISTING-FIRST"),
+                        ("second.example.test", False, "EXISTING-SECOND"),
+                        ("second.example.test", True, "EXISTING-SECOND"),
+                        ("unknown.example.test", False, "EXISTING-FIRST"),
+                        ("unknown.example.test", True, "EXISTING-SECOND"),
+                    ]:
+                        value = request("/", secure, host, ipv6)
+                        assert value == [expected, "200"], (host, secure, ipv6)
+                        baselines[(secure, host, ipv6)] = value
+                master_pid = (work / "nginx.pid").read_text().strip()
+                (enabled / "zz-infocus-assets.conf").write_text(site)
+                run("nginx", "-t", "-p", str(work), "-c", str(config))
+                nginx.send_signal(signal.SIGHUP)
+                for _ in range(50):
+                    if request("/login")[0] == (dist / "index.html").read_text():
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise AssertionError("New INFOCUS site did not become ready after graceful reload")
+                assert nginx.poll() is None and (work / "nginx.pid").read_text().strip() == master_pid
+                for (secure, host, ipv6), expected in baselines.items():
+                    assert request("/", secure, host, ipv6) == expected, (host, secure, ipv6)
                 for route in ("/login", "/assets/00000000-0000-0000-0000-000000000000"):
                     body, status = request(route)
                     assert status == "200" and body == (dist / "index.html").read_text(), route
@@ -114,7 +162,7 @@ http {{
                 assert request("/.env")[1] == "403"
                 assert request("/.well-known/acme-challenge/fixture", False) == ["challenge-ok", "200"]
                 assert request("/login", False)[1] == "301"
-                print("PASS: Nginx syntax, HTTPS, API prefix/headers, SPA login/asset routes, static files, hidden files, ACME and HTTP redirect.")
+                print("PASS: Two existing apps and IPv4/IPv6 implicit default hosts preserved across graceful reload; Nginx master unchanged; INFOCUS HTTPS, API, SPA, static files, hidden files, ACME and HTTP redirect.")
             finally:
                 if nginx.poll() is None:
                     nginx.terminate()

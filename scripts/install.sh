@@ -11,11 +11,13 @@ CONFIG=/etc/infocus-assets
 ENV_FILE=$CONFIG/app.env
 MAINTENANCE=$CONFIG/maintenance.env
 SITE=/etc/nginx/sites-available/infocus-assets.conf
-ENABLED=/etc/nginx/sites-enabled/infocus-assets.conf
+ENABLED=/etc/nginx/sites-enabled/zz-infocus-assets.conf
+LEGACY_ENABLED=/etc/nginx/sites-enabled/infocus-assets.conf
 UNIT=/etc/systemd/system/infocus-assets.service
 MARKER='# Managed by infocus-assets installer'
-SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
-DOMAIN=''; EMAIL=''; REQUESTED_PORT=''; DB_PORT=''; LETSENCRYPT=false; DRY_RUN=false
+SOURCE=$PWD
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P); fi
+DOMAIN=''; EMAIL=''; REQUESTED_PORT=''; DB_PORT=''; LETSENCRYPT=false; DRY_RUN=false; CHECK=false
 WORK=''
 
 info() { printf '\n[INFOCUS] %s\n' "$*"; }
@@ -28,6 +30,7 @@ usage() {
 INFOCUS Asset Management — Ubuntu/Debian installer (systemd required)
 
   sudo bash scripts/install.sh --domain assets.example.com
+  sudo bash scripts/install.sh --domain assets.example.com --check
   sudo bash scripts/install.sh --domain assets.example.com --letsencrypt --email admin@example.com
   bash scripts/install.sh --domain assets.example.com --dry-run
 
@@ -38,10 +41,13 @@ Options:
   --letsencrypt   Obtain/keep a trusted certificate using Certbot webroot (DNS must work).
   --email EMAIL   Required with --letsencrypt; accepts Let's Encrypt subscriber terms.
   --dry-run       Print the plan; do not install, create files, or contact the database.
+  --check         Read-only server checks, including PostgreSQL; do not install or change services.
   --help          Print this help.
 
 Uses /opt/infocus-assets, /etc/infocus-assets, systemd infocus-assets.service,
-and /etc/nginx/sites-available/infocus-assets.conf. Existing unrelated sites stay intact.
+and /etc/nginx/sites-available/infocus-assets.conf, enabled as zz-infocus-assets.conf.
+Requires installed prerequisites and already-running Nginx/PostgreSQL. It does not
+install OS packages, start shared services, or change their boot/renewal settings.
 Without --letsencrypt, HTTPS initially uses a self-signed certificate (browser warning).
 After adding DNS, rerun with --letsencrypt --email. Existing trusted certificates persist.
 Reruns preserve credentials, migrate forward, build a new release, and restart the app.
@@ -59,6 +65,7 @@ while (($#)); do
       shift 2;;
     --letsencrypt) LETSENCRYPT=true; shift;;
     --dry-run) DRY_RUN=true; shift;;
+    --check) CHECK=true; shift;;
     --help|-h) usage; exit 0;;
     *) die "Unknown option: $1. Use --help.";;
   esac
@@ -74,6 +81,7 @@ valid_domain() {
   [[ ! "$1" =~ ^[0-9.]+$ ]]
 }
 read_setting() { awk -v key="$2" 'index($0,key "=")==1 { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$1"; }
+node_supported() { "$1" -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit((a===22&&b>=12)||a===24?0:1)' >/dev/null 2>&1; }
 [[ -z "$REQUESTED_PORT" ]] || valid_port "$REQUESTED_PORT" || die 'Invalid --port (1–65535).'
 [[ -z "$REQUESTED_PORT" ]] || ((REQUESTED_PORT >= 1024)) || die '--port must be an unprivileged API port (1024–65535).'
 [[ -z "$DB_PORT" ]] || valid_port "$DB_PORT" || die 'Invalid --db-port (1–65535).'
@@ -81,19 +89,20 @@ read_setting() { awk -v key="$2" 'index($0,key "=")==1 { sub(/^[^=]*=/, ""); sub
 if $LETSENCRYPT; then
   [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die '--letsencrypt requires --email with a valid contact address.'
 fi
+$DRY_RUN && $CHECK && die 'Use --dry-run or --check, not both.'
 if $DRY_RUN; then
   cat <<PLAN
 Dry run: no changes and no database connection.
 Source: $SOURCE
 Hostname: ${DOMAIN:-<prompt or existing hostname>}; HTTPS: $(if $LETSENCRYPT; then printf "Let's Encrypt"; else printf 'existing certificate or new self-signed certificate'; fi)
 1. Check Ubuntu/Debian, root/systemd, managed paths, existing Nginx configuration, and port conflicts.
-2. Install missing build tools/PostgreSQL/Nginx. Reuse compatible Node or install isolated Node 22.
+2. Require installed build tools and running PostgreSQL/Nginx. Reuse compatible Node or install private Node 22 without changing the shared runtime.
 3. Preserve or generate separate runtime/migration database credentials and JWT secrets.
-4. Build a new non-root release under $ROOT/releases; never copy local .env or node_modules.
+4. Build a new non-root release under $ROOT/releases with CPU/memory/I/O limits; never copy local .env or node_modules.
 5. Create database asset_management only if absent; verify owner/role/schema; deploy Prisma migrations.
 6. Restrict runtime role to application DML; point systemd at the verified release on loopback.
 7. Add $SITE: frontend at /, API at /api/, HTTP redirects to HTTPS.
-8. Validate Nginx before reload; verify API/database and HTTPS SPA routes locally without DNS.
+8. Validate Nginx before graceful reload; retain existing site ordering and verify API/database and HTTPS SPA routes locally without DNS.
 9. Keep previous releases and credentials. Print first-administrator and DNS next steps.
 API port: ${REQUESTED_PORT:-5000 (or existing; next free on first install)}; PostgreSQL port: ${DB_PORT:-auto-detect local cluster}.
 PLAN
@@ -102,10 +111,18 @@ fi
 [[ $EUID -eq 0 ]] || die 'Run with sudo. Use --dry-run to inspect the plan without root.'
 [[ "$(uname -s)" == Linux && -f /etc/debian_version ]] || die 'This installer requires Ubuntu/Debian Linux. Use the README local steps on Windows.'
 [[ -d /run/systemd/system ]] || die 'A running systemd host is required; this is not a Docker/WSL image bootstrap script.'
-[[ -f "$SOURCE/package-lock.json" && -f "$SOURCE/scripts/setup-db.sh" && -f "$SOURCE/backend/prisma/schema.prisma" ]] || die 'Run from a complete application checkout.'
-command -v flock >/dev/null || die 'Install util-linux (flock) before running this installer.'
-exec 9>/run/lock/infocus-assets-install.lock
-flock -n 9 || die 'Another INFOCUS installation is already running.'
+if ! $CHECK; then
+  [[ -f "$SOURCE/package-lock.json" && -f "$SOURCE/scripts/setup-db.sh" && -f "$SOURCE/backend/prisma/schema.prisma" ]] || die 'Run from a complete application checkout.'
+fi
+info 'Checking installed prerequisites; shared system packages and services are never provisioned automatically.'
+MISSING=()
+for command in curl openssl rsync xz ss make g++ python3 nginx psql flock runuser systemctl systemd-run; do
+  command -v "$command" >/dev/null || MISSING+=("$command")
+done
+[[ -f /etc/ssl/certs/ca-certificates.crt ]] || MISSING+=(ca-certificates)
+if $LETSENCRYPT && ! command -v certbot >/dev/null; then MISSING+=(certbot); fi
+((${#MISSING[@]} == 0)) || die "Missing prerequisites: ${MISSING[*]}. Have the server administrator install/configure them during an approved maintenance window, then rerun --check. No packages were installed."
+systemctl is-active --quiet nginx || die 'Nginx must already be running. This installer will not start or enable a shared service.'
 managed_file() { [[ ! -e "$1" && ! -L "$1" ]] || { [[ -f "$1" && ! -L "$1" ]] && grep -Fqx "$MARKER" "$1"; }; }
 for file in "$ENV_FILE" "$MAINTENANCE" "$SITE" "$UNIT"; do
   managed_file "$file" || die "Refusing to overwrite unmanaged file: $file."
@@ -116,12 +133,21 @@ for directory in "$ROOT" "$CONFIG"; do
 done
 if id "$APP" >/dev/null 2>&1; then
   [[ -f "$ROOT/.infocus-managed" ]] || die 'An unrelated infocus-assets OS account already exists; refusing to adopt it.'
+  [[ "$(getent passwd "$APP" | cut -d: -f6)" == /var/lib/infocus-assets ]] || die 'Existing infocus-assets OS account has an unexpected home; refusing to reuse it.'
 elif [[ -e /var/lib/infocus-assets ]]; then
   die 'An unrelated /var/lib/infocus-assets directory exists; refusing to adopt it.'
+elif getent group "$APP" >/dev/null; then
+  die 'An unrelated infocus-assets OS group already exists; refusing to adopt it.'
 fi
 [[ ! -e /etc/letsencrypt/live/$APP || -f "$ENV_FILE" ]] || die 'An unrelated Certbot certificate already uses the infocus-assets name.'
 if [[ -e "$ENABLED" || -L "$ENABLED" ]]; then
   [[ -L "$ENABLED" && "$(readlink -- "$ENABLED")" == "$SITE" ]] || die "Unmanaged enabled site exists: $ENABLED."
+fi
+[[ ! -e "$LEGACY_ENABLED" && ! -L "$LEGACY_ENABLED" ]] || die "Legacy enabled site $LEGACY_ENABLED exists. Review and move only this app's managed symlink to $ENABLED during a planned migration, then rerun --check. No existing link was changed."
+UNIT_FRAGMENT=$(systemctl show "$APP.service" --property=FragmentPath --value 2>/dev/null || true)
+[[ -z "$UNIT_FRAGMENT" || "$UNIT_FRAGMENT" == "$UNIT" ]] || die "An existing service named $APP uses $UNIT_FRAGMENT; refusing to replace it."
+if $LETSENCRYPT; then
+  managed_file /etc/letsencrypt/renewal-hooks/deploy/infocus-assets-reload || die 'An unmanaged INFOCUS certificate renewal hook already exists.'
 fi
 if [[ -e "$ROOT/current" && ! -L "$ROOT/current" ]]; then die "$ROOT/current must be the managed release symlink."; fi
 if [[ -f "$ENV_FILE" ]]; then
@@ -140,11 +166,13 @@ if [[ -z "$DOMAIN" ]]; then
   DOMAIN=${DOMAIN,,}
 fi
 valid_domain "$DOMAIN" || die 'Invalid hostname.'
-WORK=$(mktemp -d /tmp/infocus-assets-install.XXXXXXXX)
-chmod 700 "$WORK"
-if command -v nginx >/dev/null; then
+check_nginx() {
+  local entry web_port
   nginx -t || die 'Existing Nginx configuration is invalid. Correct it before installation.'
-  nginx -T > "$WORK/nginx-existing.txt" 2>/dev/null
+  NGINX_EXISTING=$(nginx -T 2>/dev/null) || die 'Cannot read the existing Nginx configuration.'
+  NGINX_UNRELATED=$(awk -v managed="$SITE" -v enabled="$ENABLED" '
+    /^# configuration file / { file=$4; sub(/:$/, "", file) }
+    file!=managed && file!=enabled { print }' <<< "$NGINX_EXISTING")
   if awk -v managed="$SITE" -v enabled="$ENABLED" -v domain="$DOMAIN" '
     /^# configuration file / { file=$4; sub(/:$/, "", file); reading=0; next }
     file!=managed && file!=enabled {
@@ -154,24 +182,26 @@ if command -v nginx >/dev/null; then
         else if($i==";") reading=0
         else if(reading && $i==domain) found=1
       }
-    } END { exit !found }' "$WORK/nginx-existing.txt"; then
+    } END { exit !found }' <<< "$NGINX_EXISTING"; then
     die "An unrelated Nginx site already owns $DOMAIN. No site was overwritten."
   fi
-fi
-info 'Checking system packages and local PostgreSQL.'
-export DEBIAN_FRONTEND=noninteractive
-PACKAGES=()
-for pair in 'curl:curl' 'openssl:openssl' 'rsync:rsync' 'xz:xz-utils' 'ss:iproute2' 'make:build-essential' 'g++:build-essential' 'python3:python3' 'nginx:nginx'; do
-  command -v "${pair%%:*}" >/dev/null || PACKAGES+=("${pair#*:}")
-done
-[[ -f /etc/ssl/certs/ca-certificates.crt ]] || PACKAGES+=(ca-certificates)
-if ! command -v psql >/dev/null; then PACKAGES+=(postgresql postgresql-client); fi
-if $LETSENCRYPT && ! command -v certbot >/dev/null; then PACKAGES+=(certbot); fi
-if ((${#PACKAGES[@]})); then apt-get update; apt-get install -y --no-install-recommends "${PACKAGES[@]}"; fi
-nginx -T > "$WORK/nginx-existing.txt" 2>/dev/null || die 'Nginx configuration is invalid.'
-grep -Eq '^[[:space:]]*include[[:space:]]+/etc/nginx/sites-enabled/\*[[:space:]]*;' "$WORK/nginx-existing.txt" || die 'Nginx must include /etc/nginx/sites-enabled/* in its http block. Review your custom configuration; this installer does not change global Nginx settings.'
+  grep -Eq '^[[:space:]]*include[[:space:]]+/etc/nginx/sites-enabled/\*[[:space:]]*;' <<< "$NGINX_EXISTING" || die 'Nginx must include /etc/nginx/sites-enabled/* in its http block. This installer does not change global Nginx settings.'
+  # Nginx expands include globs in lexical order. Keep every existing default ahead
+  # of this new hostname, including configurations without explicit default_server.
+  local LC_ALL=C
+  for entry in /etc/nginx/sites-enabled/*; do
+    [[ -e "$entry" || -L "$entry" ]] || continue
+    [[ "$entry" == "$ENABLED" ]] && continue
+    [[ "${entry##*/}" < "${ENABLED##*/}" ]] || die "Enabled site $entry does not sort before $ENABLED. Refusing to change implicit default-server ordering; review the integration explicitly."
+  done
+  for web_port in 80 443; do
+    ss -H -ltnp | awk -v port=":$web_port" '$4 ~ (port "$") {seen=1; if($0 !~ /\(\("nginx",/) foreign=1} END {exit !(seen && !foreign)}' || die "Nginx must already own all listeners on port $web_port. No existing web process will be started, stopped, or replaced."
+  done
+}
+check_nginx
+NGINX_BASELINE=$NGINX_UNRELATED
+info 'Checking the existing local PostgreSQL cluster.'
 id postgres >/dev/null 2>&1 || die 'PostgreSQL client exists but local postgres OS user does not; install/configure a local PostgreSQL server first.'
-systemctl start postgresql
 if [[ -z "$DB_PORT" && -f "$MAINTENANCE" ]]; then DB_PORT=$(read_setting "$MAINTENANCE" PG_ADMIN_PORT); fi
 if [[ -z "$DB_PORT" ]]; then
   if command -v pg_lsclusters >/dev/null; then
@@ -181,7 +211,59 @@ if [[ -z "$DB_PORT" ]]; then
   else DB_PORT=5432; fi
 fi
 valid_port "$DB_PORT" || die 'Invalid stored PostgreSQL port.'
-runuser -u postgres -- psql -X -w -p "$DB_PORT" -d postgres -Atqc 'SELECT 1' >/dev/null || die 'Cannot connect to the local PostgreSQL cluster through peer authentication; verify --db-port and server status.'
+peer_query() { runuser -u postgres -- env -i PATH=/usr/bin:/bin PGCONNECT_TIMEOUT=10 PGOPTIONS='-c default_transaction_read_only=on' psql -X -w -p "$DB_PORT" -d postgres -Atq --set=ON_ERROR_STOP=1 -c "$1"; }
+peer_query 'SELECT 1' >/dev/null || die 'Cannot connect to the running local PostgreSQL cluster through peer authentication; verify --db-port. No cluster was started or modified.'
+DB_OWNER=$(peer_query "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname='asset_management';")
+DB_ROLES=$(peer_query "SELECT rolname FROM pg_roles WHERE rolname IN ('infocus_assets_owner','infocus_assets') ORDER BY rolname;")
+if [[ -f "$ENV_FILE" ]]; then
+  [[ -z "$DB_OWNER" || "$DB_OWNER" == infocus_assets_owner ]] || die "Existing asset_management database is owned by $DB_OWNER; refusing to adopt it."
+else
+  [[ -z "$DB_OWNER" && -z "$DB_ROLES" ]] || die 'The asset_management database or INFOCUS role names already exist without managed installation credentials. Refusing to adopt another application namespace.'
+fi
+
+port_busy() { ss -H -ltn | awk -v port=":$1" '$4 ~ (port "$") { found=1 } END { exit !found }'; }
+if [[ -f "$ENV_FILE" ]]; then
+  PORT=$(read_setting "$ENV_FILE" PORT)
+  valid_port "$PORT" || die 'Invalid stored API port.'
+  ((PORT >= 1024)) || die 'Stored API port must be unprivileged (1024 or above).'
+  [[ -z "$REQUESTED_PORT" || "$REQUESTED_PORT" == "$PORT" ]] || die 'Existing API port is retained; change the managed configuration manually during maintenance.'
+  [[ "$(read_setting "$MAINTENANCE" PG_ADMIN_PORT)" == "$DB_PORT" ]] || die 'Existing database port differs from --db-port; database relocation requires a planned migration.'
+  [[ "$(read_setting "$ENV_FILE" NODE_ENV)" == production && "$(read_setting "$ENV_FILE" HOST)" == 127.0.0.1 && "$(read_setting "$ENV_FILE" TRUST_PROXY_HOPS)" == 1 ]] || die 'Production NODE_ENV/HOST/TRUST_PROXY_HOPS configuration was changed; review it before rerunning.'
+  if port_busy "$PORT"; then
+    MAIN_PID=$(systemctl show "$APP" --property=MainPID --value 2>/dev/null || true)
+    [[ "$MAIN_PID" =~ ^[1-9][0-9]*$ ]] || die "Existing API port $PORT is occupied without a running managed service."
+    ss -H -ltnp | awk -v port=":$PORT" -v pid="pid=$MAIN_PID," '$4 ~ (port "$") {if(index($0,pid)) owned=1; else foreign=1} END {exit !(owned && !foreign)}' || die "API port $PORT is occupied by another process; it was not stopped."
+  fi
+else
+  PORT=${REQUESTED_PORT:-5000}
+  while port_busy "$PORT"; do ((PORT+=1)); ((PORT<=65535)) || die 'No free API port found.'; done
+  [[ "$PORT" == "${REQUESTED_PORT:-5000}" ]] || info "Requested API port occupied; selected $PORT."
+fi
+check_resources() {
+  local available_kib free_kib disk_path=/opt
+  [[ ! -d "$ROOT" ]] || disk_path=$ROOT
+  available_kib=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+  free_kib=$(df -Pk "$disk_path" | awk 'NR==2 {print $4}')
+  [[ "$available_kib" =~ ^[0-9]+$ ]] && ((available_kib >= 1536 * 1024)) || die 'At least 1536 MiB of currently available RAM is required before building. Existing applications were not stopped and no swap was created.'
+  [[ "$free_kib" =~ ^[0-9]+$ ]] && ((free_kib >= 4 * 1024 * 1024)) || die 'At least 4 GiB free disk space is required under /opt/infocus-assets before building.'
+  info "Build headroom: $((available_kib / 1024)) MiB available RAM; $((free_kib / 1024)) MiB free disk."
+}
+check_resources
+if command -v node >/dev/null && node_supported "$(command -v node)"; then
+  info 'A compatible Node runtime is present; installation will verify service-user access before reuse.'
+else
+  case "$(uname -m)" in x86_64|aarch64|arm64) ;; *) die 'A private Node runtime can only be installed automatically on x86_64/arm64.';; esac
+  info 'Installation will download a private Node 22 runtime under /opt/infocus-assets/node; the existing shared Node version will stay unchanged.'
+fi
+info "Server checks passed for https://$DOMAIN: API loopback port $PORT; PostgreSQL port $DB_PORT; enabled site $ENABLED."
+if $CHECK; then
+  info 'Read-only check complete. No files, packages, databases, credentials, or services were changed. This is not a deployment or a guarantee against load/configuration changes after this check.'
+  exit 0
+fi
+exec 9>/run/lock/infocus-assets-install.lock
+flock -n 9 || die 'Another INFOCUS installation is already running.'
+WORK=$(mktemp -d /tmp/infocus-assets-install.XXXXXXXX)
+chmod 700 "$WORK"
 
 info 'Preparing isolated runtime and service account.'
 install -d -m 755 "$ROOT" "$ROOT/releases" "$ROOT/bin"
@@ -192,7 +274,6 @@ if id "$APP" >/dev/null 2>&1; then
 else useradd --system --user-group --home-dir /var/lib/infocus-assets --create-home --shell /usr/sbin/nologin "$APP"; fi
 chown root:"$APP" "$CONFIG"
 install -d -m 750 -o "$APP" -g "$APP" /var/lib/infocus-assets
-node_supported() { "$1" -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit((a===22&&b>=12)||a===24?0:1)' >/dev/null 2>&1; }
 NODE=''
 if [[ -x "$ROOT/bin/node" ]] && node_supported "$ROOT/bin/node"; then NODE=$(readlink -f "$ROOT/bin/node")
 elif command -v node >/dev/null && node_supported "$(command -v node)" && command -v npm >/dev/null; then NODE=$(readlink -f "$(command -v node)"); fi
@@ -218,23 +299,7 @@ ln -sfn -- "$(readlink -f "$NPM")" "$ROOT/bin/npm"
 export PATH="$ROOT/bin:$NODE_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 info "Using Node $($NODE --version)."
 
-port_busy() { ss -H -ltn | awk -v port=":$1" '$4 ~ (port "$") { found=1 } END { exit !found }'; }
-if [[ -f "$ENV_FILE" ]]; then
-  PORT=$(read_setting "$ENV_FILE" PORT)
-  valid_port "$PORT" || die 'Invalid stored API port.'
-  ((PORT >= 1024)) || die 'Stored API port must be unprivileged (1024 or above).'
-  [[ -z "$REQUESTED_PORT" || "$REQUESTED_PORT" == "$PORT" ]] || die 'Existing API port is retained; change the managed configuration manually during maintenance.'
-  [[ "$(read_setting "$MAINTENANCE" PG_ADMIN_PORT)" == "$DB_PORT" ]] || die 'Existing database port differs from --db-port; database relocation requires a planned migration.'
-  [[ "$(read_setting "$ENV_FILE" NODE_ENV)" == production && "$(read_setting "$ENV_FILE" HOST)" == 127.0.0.1 && "$(read_setting "$ENV_FILE" TRUST_PROXY_HOPS)" == 1 ]] || die 'Production NODE_ENV/HOST/TRUST_PROXY_HOPS configuration was changed; review it before rerunning.'
-  if port_busy "$PORT"; then
-    MAIN_PID=$(systemctl show "$APP" --property=MainPID --value 2>/dev/null || true)
-    [[ "$MAIN_PID" =~ ^[1-9][0-9]*$ ]] || die "Existing API port $PORT is occupied without a running managed service."
-    ss -H -ltnp | awk -v port=":$PORT" -v pid="pid=$MAIN_PID," '$4 ~ (port "$") {if(index($0,pid)) owned=1; else foreign=1} END {exit !(owned && !foreign)}' || die "API port $PORT is occupied by another process; it was not stopped."
-  fi
-else
-  PORT=${REQUESTED_PORT:-5000}
-  while port_busy "$PORT"; do ((PORT+=1)); ((PORT<=65535)) || die 'No free API port found.'; done
-  [[ "$PORT" == "${REQUESTED_PORT:-5000}" ]] || info "Requested API port occupied; selected $PORT."
+if [[ ! -f "$ENV_FILE" ]]; then
   OWNER_PASS=$(openssl rand -hex 32); RUNTIME_PASS=$(openssl rand -hex 32)
   JWT=$(openssl rand -hex 48); REFRESH=$(openssl rand -hex 48)
   cat > "$MAINTENANCE" <<ENV
@@ -271,12 +336,22 @@ chown root:"$APP" "$ENV_FILE"; chmod 640 "$ENV_FILE"
 chown root:root "$MAINTENANCE"; chmod 600 "$MAINTENANCE"
 
 info 'Building a fresh release as the unprivileged application account.'
+check_resources
 RELEASE=$ROOT/releases/$(date -u +%Y%m%dT%H%M%SZ)-$$
 install -d -m 755 -o "$APP" -g "$APP" "$RELEASE"
 rsync -a --safe-links --chown="$APP:$APP" --exclude='.git' --exclude='node_modules' --exclude='.env' --exclude='.env.*' --exclude='.local' --exclude='dist' --exclude='test-results' --exclude='playwright-report' --exclude='coverage' "$SOURCE/" "$RELEASE/"
-runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" NODE_ENV=development npm --prefix "$RELEASE" ci --include=dev
-runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" NODE_ENV=development npm --prefix "$RELEASE" run db:generate
-runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" NODE_ENV=production VITE_API_URL=/api npm --prefix "$RELEASE" run build
+bounded_build() {
+  # Each transient service confines all npm/build children, not just the parent.
+  # Failure/OOM aborts this installation without borrowing unlimited host memory.
+  systemd-run --wait --pipe --collect --uid="$APP" --gid="$APP" \
+    --property=CPUQuota=100% --property=MemoryMax=1536M --property=MemorySwapMax=512M \
+    --property=Nice=10 --property=IOWeight=10 --property=OOMPolicy=kill \
+    --property=WorkingDirectory="$RELEASE" \
+    /usr/bin/env -i HOME=/var/lib/infocus-assets PATH="$PATH" "$@"
+}
+bounded_build NODE_ENV=development npm --prefix "$RELEASE" ci --include=dev
+bounded_build NODE_ENV=development npm --prefix "$RELEASE" run db:generate
+bounded_build NODE_ENV=production VITE_API_URL=/api npm --prefix "$RELEASE" run build
 [[ -s "$RELEASE/frontend/dist/index.html" && -f "$RELEASE/backend/dist/server.js" ]] || die 'Build artifacts are missing.'
 info 'Verifying database roles, schema, and forward migrations.'
 env -i PATH="$PATH" HOME=/root bash "$RELEASE/scripts/setup-db.sh" --env-file "$MAINTENANCE"
@@ -294,7 +369,6 @@ $MARKER
 [Unit]
 Description=INFOCUS Asset Management API
 After=network.target postgresql.service
-Wants=postgresql.service
 
 [Service]
 Type=simple
@@ -410,12 +484,13 @@ apply_nginx() {
   local previous="$WORK/nginx-previous.conf" had_site=false had_link=false
   if [[ -f "$SITE" ]]; then cp -p "$SITE" "$previous"; had_site=true; fi
   [[ ! -L "$ENABLED" ]] || had_link=true
+  # Recheck the shared configuration/ordering immediately before changing our site.
+  check_nginx
+  [[ "$NGINX_UNRELATED" == "$NGINX_BASELINE" ]] || die 'Unrelated Nginx configuration changed during this installation. Refusing a global reload; review the concurrent changes and rerun.'
   render_nginx > "$WORK/nginx-next.conf"
   install -m 644 "$WORK/nginx-next.conf" "$SITE"
   ln -sfn -- "$SITE" "$ENABLED"
-  if nginx -t && { if systemctl is-active --quiet nginx; then systemctl reload nginx; else systemctl start nginx; fi; }; then
-    systemctl enable nginx
-  else
+  if ! { nginx -t && systemctl is-active --quiet nginx && systemctl reload nginx; }; then
     if $had_site; then cp -p "$previous" "$SITE"; else rm -f -- "$SITE"; fi
     $had_link || rm -f -- "$ENABLED"
     if nginx -t && systemctl is-active --quiet nginx; then systemctl reload nginx || true; fi
@@ -435,11 +510,12 @@ if $LETSENCRYPT; then
 #!/usr/bin/env bash
 # Managed by infocus-assets installer
 set -euo pipefail
+[[ "${RENEWED_LINEAGE:-}" == /etc/letsencrypt/live/infocus-assets ]] || exit 0
 nginx -t
 systemctl reload nginx
 RENEW
   chmod 755 "$HOOK"
-  if systemctl list-unit-files certbot.timer --no-legend | grep -q '^certbot.timer'; then systemctl enable --now certbot.timer; fi
+  info 'Existing certificate renewal scheduling was preserved. Verify the server already runs Certbot renewal automatically.'
 fi
 info 'Verifying HTTPS, API routing, and client-side page routing without relying on DNS.'
 CURL_TLS=()

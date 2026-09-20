@@ -5,7 +5,7 @@ Use [README.md](../README.md) for local Windows development. This guide deploys 
 ## Deployment layout
 
 ```text
-Browser → https://assets.company.com
+Browser → https://assets.infocuscs.com
                  │
                  Nginx (ports 80/443)
                  ├── /       → React files + SPA route fallback
@@ -14,22 +14,23 @@ Browser → https://assets.company.com
                                       PostgreSQL on local port 5432
 ```
 
-The default internal API port is 5000. The installer can select another free port on a first installation. It binds the API to loopback; only Nginx should expose the application publicly. PostgreSQL remains local. No Redis, MinIO, Google OAuth, or .NET components are required by this application.
+The generic default internal API port is 5000. On the INFOCUS shared server, SERV-IT already uses 5000 and Grow Together uses 5001; use `--port 5002`. The installer can select another free port on a first installation. It binds the API to loopback; only Nginx should expose the application publicly. PostgreSQL remains local. No Redis, MinIO, Google OAuth, or .NET components are required by this application.
 
 The deployment uses a dedicated hostname at `/`. Hosting below a path such as `/assets-app/` requires additional React Router, Vite base-path, API, and cookie configuration and is not implemented by this installer.
 
 ## 1. Prepare the server
 
-Use Ubuntu/Debian with systemd and sudo/root access. Copy or clone the repository, including `package-lock.json` and all committed Prisma migrations, onto the server. The installer needs outbound access to package and runtime download sources and the npm registry. It reuses a compatible Node.js 22.12+ or 24 installation, or installs a private Node runtime, and reuses the existing local PostgreSQL server. Missing required packages are installed through the operating system's package manager.
+Use Ubuntu/Debian with systemd and sudo/root access. Copy or clone the repository, including `package-lock.json` and all committed Prisma migrations, onto the server. The installer needs outbound access to official Node runtime downloads and the npm registry. It reuses a compatible Node.js 22.12+ or 24 installation, or installs a private Node runtime under `/opt/infocus-assets` without replacing the system Node used by other apps. It reuses the running local PostgreSQL server. Required system tools must already be installed; missing tools cause a preflight failure. Prepare missing OS packages separately during appropriate server maintenance, since package-manager hooks can affect shared services.
 
 Run from the repository root:
 
 ```bash
 bash scripts/install.sh --help
-sudo bash scripts/install.sh --domain assets.company.com --dry-run
+sudo bash scripts/install.sh --domain assets.infocuscs.com --dry-run
+sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 --check
 ```
 
-Replace the hostname with the domain you intend to add in DNS. The dry run prints the intended actions without installing packages, creating databases, or changing services.
+`assets.infocuscs.com` is the intended hostname. `--dry-run` prints the plan without inspecting the server. `--check` performs actual read-only checks of dependencies, Nginx, PostgreSQL, managed paths, hostname conflicts, available ports, and build resources, then exits before deployment. Run it with sudo so it can inspect Nginx and use PostgreSQL peer authentication. It can also be run as a standalone copy of `scripts/install.sh`; normal installation requires the complete checkout.
 
 The normal installer targets a local PostgreSQL instance reachable by the `postgres` operating-system account through peer authentication. It detects the installed cluster port; specify `--db-port` if you need to choose a particular local cluster. It does not change another application's PostgreSQL port, database, or credentials. For remote PostgreSQL or a different administrative authentication setup, provision the database with the [database helper](DATABASE.md#database-creation-and-schema-setup) and adapt a reviewed deployment configuration instead of running this local-server installer unchanged.
 
@@ -40,13 +41,13 @@ Nginx must use the standard `/etc/nginx/sites-enabled/*` include inside its HTTP
 ## 2. Install the application
 
 ```bash
-sudo bash scripts/install.sh --domain assets.company.com
+sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
 ```
 
 Optional explicit ports:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.company.com --port 5000 --db-port 5432
+sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
 ```
 
 The installer:
@@ -64,24 +65,35 @@ No demo seed or administrator account is created automatically. An incompatible 
 
 Existing unrelated Nginx sites remain enabled. The installer owns only the INFOCUS site and service paths below. Existing databases are not dropped or reset. Applied migrations can still change the application schema, so take a recoverable backup before an upgrade.
 
+## Shared-server safeguards
+
+- System packages and the system Node/PostgreSQL versions are left in place. Nginx and the selected PostgreSQL cluster must already be running. The installer only starts/restarts its own `infocus-assets` application service.
+- The separate `asset_management` database and `infocus_assets_owner`/`infocus_assets` roles must be unused or belong to a compatible prior INFOCUS installation. Existing application databases are not adopted or reset.
+- The new enabled-site link is `zz-infocus-assets.conf`. Installation refuses if that name would sort before another enabled site, or if the older `infocus-assets.conf` enabled link remains; review the routing layout instead of removing existing sites. Existing default hosts and domain routing retain their order.
+- Nginx receives a configuration test followed by a graceful reload. Its boot enablement is not changed. The installer refuses to reload if unrelated Nginx configuration changes during its run. A reload applies the server's complete on-disk configuration, so resolve any pre-existing unreviewed edits to other sites before deployment.
+- Builds run at lower priority with one CPU's worth of quota, 1536 MiB memory and 512 MiB swap limits. Preflight requires at least 1536 MiB available memory and 4 GiB available disk space. This limits build contention but does not remove all load from the shared machine.
+- Certificate renewal hooks are scoped to the INFOCUS certificate. The installer does not start or enable the shared Certbot timer; confirm an existing timer or scheduled renewal job is active before relying on automatic renewal.
+
+The server inspection found the two existing apps healthy over HTTPS, the new DNS pointing to the intended host, and the INFOCUS paths/database/roles unused. These are point-in-time checks; rerun `--check` immediately before deployment.
+
 ## Paths and service names
 
-| Item                                   | Path / name                                      |
-| -------------------------------------- | ------------------------------------------------ |
-| Application releases                   | `/opt/infocus-assets/releases/`                  |
-| Active release symlink                 | `/opt/infocus-assets/current`                    |
-| Stable Node executable                 | `/opt/infocus-assets/bin/node`                   |
-| Stable npm entry point                 | `/opt/infocus-assets/bin/npm`                    |
-| Runtime environment                    | `/etc/infocus-assets/app.env`                    |
-| Maintenance / schema-owner environment | `/etc/infocus-assets/maintenance.env`            |
-| Service user and systemd unit          | `infocus-assets` / `infocus-assets.service`      |
-| systemd unit file                      | `/etc/systemd/system/infocus-assets.service`     |
-| Nginx site definition                  | `/etc/nginx/sites-available/infocus-assets.conf` |
-| Nginx enabled-site link                | `/etc/nginx/sites-enabled/infocus-assets.conf`   |
-| Frontend files                         | `/opt/infocus-assets/current/frontend/dist/`     |
-| Initial self-signed certificate/key    | `/etc/infocus-assets/tls/cert.pem` / `key.pem`   |
-| Let's Encrypt certificate directory    | `/etc/letsencrypt/live/infocus-assets/`          |
-| ACME challenge webroot                 | `/opt/infocus-assets/acme/`                      |
+| Item                                   | Path / name                                       |
+| -------------------------------------- | ------------------------------------------------- |
+| Application releases                   | `/opt/infocus-assets/releases/`                   |
+| Active release symlink                 | `/opt/infocus-assets/current`                     |
+| Stable Node executable                 | `/opt/infocus-assets/bin/node`                    |
+| Stable npm entry point                 | `/opt/infocus-assets/bin/npm`                     |
+| Runtime environment                    | `/etc/infocus-assets/app.env`                     |
+| Maintenance / schema-owner environment | `/etc/infocus-assets/maintenance.env`             |
+| Service user and systemd unit          | `infocus-assets` / `infocus-assets.service`       |
+| systemd unit file                      | `/etc/systemd/system/infocus-assets.service`      |
+| Nginx site definition                  | `/etc/nginx/sites-available/infocus-assets.conf`  |
+| Nginx enabled-site link                | `/etc/nginx/sites-enabled/zz-infocus-assets.conf` |
+| Frontend files                         | `/opt/infocus-assets/current/frontend/dist/`      |
+| Initial self-signed certificate/key    | `/etc/infocus-assets/tls/cert.pem` / `key.pem`    |
+| Let's Encrypt certificate directory    | `/etc/letsencrypt/live/infocus-assets/`           |
+| ACME challenge webroot                 | `/opt/infocus-assets/acme/`                       |
 
 `app.env` is readable by root and the application service group (mode 640); `maintenance.env` is root-only (mode 600). Keep both out of source control, tickets, screenshots, and application logs. The runtime file contains the restricted database URL; the maintenance file contains the schema-owner URL. Do not give the API the maintenance credentials.
 
@@ -91,20 +103,20 @@ Initial installation uses a self-signed certificate, allowing HTTPS routing chec
 
 In your DNS provider:
 
-1. Add an **A** record for `assets.company.com` pointing to the server's public IPv4 address.
+1. Add an **A** record for `assets.infocuscs.com` pointing to the server's public IPv4 address.
 2. Add an **AAAA** record only if the server has correctly routed public IPv6 and Nginx/firewall allow it. A stale AAAA record can break certificate validation and browser access.
 3. Allow inbound TCP 80 and 443 through the server firewall and hosting-provider firewall/security group. Do not expose the API or PostgreSQL port publicly.
 
 Check DNS from a machine outside the server:
 
 ```bash
-nslookup assets.company.com
+nslookup assets.infocuscs.com
 ```
 
 Once DNS resolves to this server, rerun the installer with your certificate contact email:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.company.com \
+sudo bash scripts/install.sh --domain assets.infocuscs.com \
   --letsencrypt --email admin@company.com
 ```
 
@@ -113,8 +125,8 @@ The installer requests a Let's Encrypt certificate using the Nginx-served ACME w
 Verify normal certificate trust without `-k`:
 
 ```bash
-curl --fail --show-error https://assets.company.com/api/health
-curl --fail --show-error --head https://assets.company.com/login
+curl --fail --show-error https://assets.infocuscs.com/api/health
+curl --fail --show-error --head https://assets.infocuscs.com/login
 sudo certbot certificates
 sudo certbot renew --dry-run
 ```
@@ -149,7 +161,7 @@ After first login, configure your real categories, departments, locations, emplo
 | `JWT_SECRET` / `JWT_REFRESH_SECRET`                                 | Independent random secrets, each at least 32 characters.                                                                        |
 | `JWT_EXPIRES_IN`                                                    | Access-token lifetime, normally `15m`.                                                                                          |
 | `REFRESH_TOKEN_EXPIRES_IN` / `REMEMBER_TOKEN_EXPIRES_IN`            | Refresh lifetimes such as `7d` and `30d`; accepted duration range is `1m` through `365d`.                                       |
-| `APP_URL`                                                           | Public application URL, e.g. `https://assets.company.com`.                                                                      |
+| `APP_URL`                                                           | Public application URL, e.g. `https://assets.infocuscs.com`.                                                                    |
 | `CORS_ORIGIN`                                                       | Comma-separated allowed origins; use the exact HTTPS origin, without a trailing route.                                          |
 | `TRUST_PROXY_HOPS`                                                  | `1` for the single installed Nginx proxy; `0` for direct local development. Change only for a known, restricted proxy topology. |
 | `LOG_LEVEL`                                                         | Application logging level, normally `info`.                                                                                     |
@@ -167,7 +179,7 @@ sudo systemctl status infocus-assets --no-pager
 sudo journalctl -u infocus-assets -n 100 --no-pager
 sudo journalctl -u infocus-assets -f
 sudo nginx -t
-curl --fail --show-error https://assets.company.com/api/health
+curl --fail --show-error https://assets.infocuscs.com/api/health
 ```
 
 The health response must contain `success: true` and `database: "connected"`. A running process alone does not establish database readiness.
@@ -189,7 +201,7 @@ For a 502 response, inspect the API journal, selected `PORT`, and Nginx upstream
 3. Run the same installer from that checkout:
 
    ```bash
-   sudo bash scripts/install.sh --domain assets.company.com
+   sudo bash scripts/install.sh --domain assets.infocuscs.com
    ```
 
 4. It builds a new timestamped release, retains configuration/secrets, applies pending migrations, switches the active release, restarts the service, and checks health. Verify login, inventory, and one controlled workflow through the final domain.
