@@ -227,6 +227,8 @@ sudo systemctl start infocus-assets
 
 For a 502 response, inspect the API journal, selected `PORT`, and Nginx upstream. For a certificate error, check the domain's A/AAAA records and installed certificate. For origin/session errors, check `APP_URL`, `CORS_ORIGIN`, HTTPS, and the forwarded protocol header. If a port or hostname belongs to an existing app, choose a different dedicated value rather than removing that app's configuration.
 
+If an older installer stops during administrator creation with `spawn .../esbuild EACCES` after successful build and database checks, pull the latest code and rerun `sudo bash install.sh`. Administrator creation now runs from the readable release directory instead of inheriting a private home directory that the service account cannot access. Existing database data and credentials are retained; changing home-directory permissions is unnecessary.
+
 ## Updating and rollback limits
 
 1. Take and verify a PostgreSQL backup; record the current release path with `readlink -f /opt/infocus-assets/current`.

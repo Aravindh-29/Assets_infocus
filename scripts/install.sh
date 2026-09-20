@@ -23,6 +23,14 @@ WORK=''
 
 info() { printf '\n[INFOCUS] %s\n' "$*"; }
 die() { printf '\n[INFOCUS] ERROR: %s\n' "$*" >&2; exit 1; }
+bootstrap_admin() {
+  # runuser inherits cwd; esbuild explicitly reopens it for child processes.
+  # Use readable release code even when sudo was invoked from a private home.
+  (
+    cd -- "$RELEASE/backend" || exit 1
+    runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" "$NODE" --env-file="$ENV_FILE" "$RELEASE/node_modules/tsx/dist/cli.mjs" "$RELEASE/backend/scripts/bootstrap-installer-admin.ts"
+  )
+}
 cleanup() { [[ -z "$WORK" ]] || rm -rf -- "$WORK"; }
 trap cleanup EXIT
 trap 'printf "\n[INFOCUS] Installation stopped at line %s. Review the error above; do not reset the database.\n" "$LINENO" >&2' ERR
@@ -443,7 +451,7 @@ env -i PATH="$PATH" HOME=/root bash "$RELEASE/scripts/setup-db.sh" --env-file "$
 chown -R root:root "$RELEASE"
 chmod -R a+rX,go-w "$RELEASE"
 info 'Ensuring the first administrator exists without changing existing accounts.'
-ADMIN_BOOTSTRAP_STATUS=$(runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" "$NODE" --env-file="$ENV_FILE" "$RELEASE/node_modules/tsx/dist/cli.mjs" "$RELEASE/backend/scripts/bootstrap-installer-admin.ts")
+ADMIN_BOOTSTRAP_STATUS=$(bootstrap_admin)
 case "$ADMIN_BOOTSTRAP_STATUS" in
   created) info 'Created installer administrator admin; a password change is required at first login.';;
   existing-admin) info 'An administrator already exists; existing accounts and passwords were preserved.';;
