@@ -197,15 +197,32 @@ The database-setup script also has an opt-in PostgreSQL test suite, enabled with
 
 ## Ubuntu/Debian server installation with Nginx
 
-Copy or clone this repository onto the server. From its root, inspect the plan first:
+Copy or clone this repository onto the server. From the repository root, run:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.infocuscs.com --dry-run
-sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 --check
-sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
+sudo bash install.sh
 ```
 
-The INFOCUS hostname is `assets.infocuscs.com`. On the shared server, existing applications use ports 5000 and 5001; the commands above select 5002. `--check` inspects the live server without deploying or changing services. The installer requires existing system dependencies and running Nginx/PostgreSQL; it does not install OS packages or start/restart those shared services. It creates the separate application database if needed, verifies migrations, builds the app with resource limits, and adds its own systemd service and Nginx site. If necessary on a first install, it can choose the next free API port.
+The installer asks for each setting in order. Press **Enter** to accept a displayed default:
+
+1. Application hostname — `assets.infocuscs.com`.
+2. Internal API port — `5002`, since the other two applications use 5000 and 5001.
+3. Local PostgreSQL port — `5432`.
+4. Request trusted HTTPS with Let's Encrypt — **yes**.
+5. Certificate contact email — enter your real email address; this is required when choosing trusted HTTPS.
+
+Invalid answers are requested again. After you answer the questions, the installer runs its checks and starts installation automatically. DNS must point to this server and inbound ports 80/443 must be reachable for Let's Encrypt. Choosing trusted HTTPS and providing your email accepts its subscriber terms. On a managed rerun, the hostname and ports are retained; the wizard asks only about HTTPS and its contact email.
+
+The root `install.sh` is a launcher; the deployment implementation remains in `scripts/install.sh`. If your server has an older checkout without the launcher, run `git pull origin main` once to fetch this update. The installer uses your current checkout and does not pull Git changes automatically. Run it in an interactive Linux terminal.
+
+To preview the same questions without deploying, use either of these optional commands:
+
+```bash
+bash install.sh --interactive --dry-run
+sudo bash install.sh --interactive --check
+```
+
+`--dry-run` prints the selected plan. `--check` inspects the live server without deploying or changing services. The installer requires existing system dependencies and running Nginx/PostgreSQL; it does not install OS packages or start/restart those shared services. It creates the separate application database if needed, verifies migrations, builds the app with resource limits, and adds its own systemd service and Nginx site. If necessary on a first install, it can choose the next free API port. Explicit command-line options remain available for noninteractive use; see `bash install.sh --help`.
 
 The application is served at the domain root, with `/api` routed to the loopback API:
 
@@ -216,14 +233,7 @@ https://assets.infocuscs.com/api/   → http://127.0.0.1:<selected-port>/api/
 
 The Nginx configuration is `/etc/nginx/sites-available/infocus-assets.conf`, enabled from `/etc/nginx/sites-enabled/zz-infocus-assets.conf`. The installer requires that enabled link to sort after the existing sites, preserving their implicit default-host order, and validates Nginx before a graceful reload. This is a dedicated hostname deployment; a subpath such as `/asset-management/` is not configured. See the [shared-server safeguards](docs/DEPLOYMENT.md#shared-server-safeguards) before installation.
 
-Initially the installer uses a self-signed HTTPS certificate so installation and local routing checks can finish before DNS is ready. After you add the domain's A record (and an AAAA record only if the server has working IPv6), allow inbound ports 80/443 and request a trusted certificate:
-
-```bash
-sudo bash scripts/install.sh --domain assets.infocuscs.com \
-  --letsencrypt --email admin@company.com
-```
-
-The second run reuses stored credentials and creates a new application release. Production sessions require HTTPS; do not switch production to plain HTTP to work around certificate setup. See the [full server guide](docs/DEPLOYMENT.md) for first-admin creation, certificate verification, paths, logs, updates, and rollback limits.
+With the wizard's default HTTPS choice, the first installation requests a trusted certificate during the same run. If you choose **no** while preparing DNS, a first installation uses a self-signed certificate and browsers show a warning. Once DNS is ready, run `sudo bash install.sh` again and choose **yes**. Existing trusted certificates and stored credentials are retained; rerunning builds a new application release. Production sessions require HTTPS. See the [full server guide](docs/DEPLOYMENT.md) for first-admin creation, certificate verification, paths, logs, updates, and rollback limits.
 
 ## Production bootstrap
 
@@ -263,4 +273,5 @@ frontend/
 scripts/        Local startup, database/schema setup, Linux/Nginx installer
 e2e/            Browser workflow tests
 docs/           API, database, deployment, verification
+install.sh      Interactive launcher for scripts/install.sh
 ```

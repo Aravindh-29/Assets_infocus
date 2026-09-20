@@ -106,3 +106,17 @@ On 21 September 2026, performed an authorized read-only SSH inspection of the in
 | Isolated two-app Nginx regression | Passed; existing HTTP/HTTPS apps and IPv4/IPv6 implicit defaults retained after adding INFOCUS and gracefully reloading; same master PID |
 
 The updated installer requires installed system prerequisites, avoids OS package changes/shared-service startup or boot enablement, appends its enabled site after existing sites, and bounds build resources. The isolated Nginx fixture mirrors the existing host's IPv4/IPv6 routing arrangement. Actual deployment will still create INFOCUS resources and gracefully reload Nginx; runtime capacity, certificate issuance, and application workflows must be checked after deployment. Rerun `--check` immediately before installing because server state can change.
+
+## Interactive installer verification
+
+The repository-root `install.sh` forwards to `scripts/install.sh`. Running it without arguments opens a sequential terminal prompt for the domain, API port, PostgreSQL port, trusted HTTPS, and certificate contact email. Existing managed hostname/port settings are retained. Command-line flags remain available.
+
+All nine terminal-input tests passed in local Ubuntu WSL. They cover default/custom answers, invalid-input retries, HTTPS email requirements, skipping email when HTTPS is declined, EOF cancellation, explicit-flag precedence, non-terminal refusal, launching from another directory, the exact no-argument path, and retained configuration without exposing stored credentials. Tests used dry-run mode or cancelled before execution; no deployment was performed.
+
+Repeat on Linux:
+
+```bash
+python3 scripts/tests/install-input.test.py
+```
+
+Two tests require root to exercise the real no-argument sudo path and root-owned configuration; use `sudo python3 scripts/tests/install-input.test.py` to include them. Their fixtures are temporary files, and they do not contact PostgreSQL, reload Nginx, or start application services.

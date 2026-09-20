@@ -17,7 +17,8 @@ UNIT=/etc/systemd/system/infocus-assets.service
 MARKER='# Managed by infocus-assets installer'
 SOURCE=$PWD
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P); fi
-DOMAIN=''; EMAIL=''; REQUESTED_PORT=''; DB_PORT=''; LETSENCRYPT=false; DRY_RUN=false; CHECK=false
+DOMAIN=''; EMAIL=''; REQUESTED_PORT=''; DB_PORT=''; LETSENCRYPT=false; DRY_RUN=false; CHECK=false; INTERACTIVE=false
+(($# != 0)) || INTERACTIVE=true
 WORK=''
 
 info() { printf '\n[INFOCUS] %s\n' "$*"; }
@@ -29,12 +30,16 @@ usage() {
   cat <<'HELP'
 INFOCUS Asset Management — Ubuntu/Debian installer (systemd required)
 
+  sudo bash install.sh
+  sudo bash scripts/install.sh
+  bash install.sh --interactive --dry-run
   sudo bash scripts/install.sh --domain assets.example.com
   sudo bash scripts/install.sh --domain assets.example.com --check
   sudo bash scripts/install.sh --domain assets.example.com --letsencrypt --email admin@example.com
   bash scripts/install.sh --domain assets.example.com --dry-run
 
 Options:
+  --interactive  Ask for missing settings one at a time (automatic with no arguments).
   --domain HOST    Dedicated hostname, without https:// or a path. Prompts if absent.
   --port PORT      First-install API port (default 5000; occupied ports are skipped).
   --db-port PORT   Existing local PostgreSQL cluster port; otherwise auto-detect.
@@ -43,6 +48,12 @@ Options:
   --dry-run       Print the plan; do not install, create files, or contact the database.
   --check         Read-only server checks, including PostgreSQL; do not install or change services.
   --help          Print this help.
+
+With no arguments, asks for hostname [assets.infocuscs.com], API port [5002],
+PostgreSQL port [5432], trusted HTTPS [yes], and the certificate contact email.
+Press Enter to accept a default. Existing managed hostname/ports are retained.
+After the answers, server checks and installation start automatically.
+Combine --interactive with --dry-run or --check to inspect without deploying.
 
 Uses /opt/infocus-assets, /etc/infocus-assets, systemd infocus-assets.service,
 and /etc/nginx/sites-available/infocus-assets.conf, enabled as zz-infocus-assets.conf.
@@ -66,6 +77,7 @@ while (($#)); do
     --letsencrypt) LETSENCRYPT=true; shift;;
     --dry-run) DRY_RUN=true; shift;;
     --check) CHECK=true; shift;;
+    --interactive) INTERACTIVE=true; shift;;
     --help|-h) usage; exit 0;;
     *) die "Unknown option: $1. Use --help.";;
   esac
@@ -82,14 +94,83 @@ valid_domain() {
 }
 read_setting() { awk -v key="$2" 'index($0,key "=")==1 { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$1"; }
 node_supported() { "$1" -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit((a===22&&b>=12)||a===24?0:1)' >/dev/null 2>&1; }
+valid_email() { [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; }
+prompt_setting() {
+  local output_name=$1 label=$2 default=$3 kind=$4 answer
+  while true; do
+    read -r -p "$label${default:+ [$default]}: " answer || die 'Input ended before setup was complete; installation was not started.'
+    answer="${answer#"${answer%%[![:space:]]*}"}"
+    answer="${answer%"${answer##*[![:space:]]}"}"
+    answer=${answer:-$default}
+    case "$kind" in
+      domain)
+        answer=${answer,,}
+        valid_domain "$answer" || { printf '%s\n' 'Enter a hostname without https://, a port, or a path.' >&2; continue; };;
+      api)
+        if ! valid_port "$answer" || ((10#$answer < 1024)); then printf '%s\n' 'Enter an API port from 1024 to 65535.' >&2; continue; fi;;
+      database)
+        valid_port "$answer" || { printf '%s\n' 'Enter a PostgreSQL port from 1 to 65535.' >&2; continue; };;
+      email)
+        valid_email "$answer" || { printf '%s\n' 'Enter a valid contact email address for the HTTPS certificate.' >&2; continue; };;
+      https)
+        case "${answer,,}" in
+          y|yes) answer=true;; n|no) answer=false;;
+          *) printf '%s\n' 'Enter yes or no.' >&2; continue;;
+        esac;;
+    esac
+    printf -v "$output_name" '%s' "$answer"
+    return
+  done
+}
+interactive_settings() {
+  [[ -t 0 ]] || die 'Interactive setup needs a terminal. Run sudo bash install.sh in your SSH terminal, or provide command-line options for automation.'
+  info 'INFOCUS setup — answer each field; Enter accepts the value in brackets.'
+  if [[ -e "$ENV_FILE" || -L "$ENV_FILE" ]]; then
+    local saved_domain saved_port saved_db_port file
+    for file in "$ENV_FILE" "$MAINTENANCE"; do
+      [[ -f "$file" && ! -L "$file" ]] && grep -Fqx "$MARKER" "$file" || die "Cannot reuse unmanaged configuration: $file."
+      [[ "$(stat -c %u "$file")" == 0 ]] || die "Configuration must be root-owned: $file."
+      (( (8#$(stat -c %a "$file") & 0022) == 0 )) || die "Configuration must not be writable by group/others: $file."
+    done
+    saved_domain=$(read_setting "$ENV_FILE" APP_URL); saved_domain=${saved_domain#https://}
+    saved_port=$(read_setting "$ENV_FILE" PORT)
+    saved_db_port=$(read_setting "$MAINTENANCE" PG_ADMIN_PORT)
+    valid_domain "$saved_domain" && valid_port "$saved_port" && valid_port "$saved_db_port" || die 'Stored hostname/ports are invalid; review the managed configuration.'
+    ((10#$saved_port >= 1024)) || die 'Stored API port must be 1024 or above.'
+    [[ -z "$DOMAIN" || "$DOMAIN" == "$saved_domain" ]] || die 'An existing hostname cannot be changed through the installer.'
+    [[ -z "$REQUESTED_PORT" || "$REQUESTED_PORT" == "$saved_port" ]] || die 'An existing API port cannot be changed through the installer.'
+    [[ -z "$DB_PORT" || "$DB_PORT" == "$saved_db_port" ]] || die 'An existing PostgreSQL port cannot be changed through the installer.'
+    [[ -n "$DOMAIN" ]] || DOMAIN=$saved_domain
+    [[ -n "$REQUESTED_PORT" ]] || REQUESTED_PORT=$saved_port
+    [[ -n "$DB_PORT" ]] || DB_PORT=$saved_db_port
+    info "Existing installation: retaining https://$saved_domain, API $saved_port and PostgreSQL $saved_db_port."
+  fi
+  [[ -n "$DOMAIN" ]] || prompt_setting DOMAIN 'Application hostname' assets.infocuscs.com domain
+  [[ -n "$REQUESTED_PORT" ]] || prompt_setting REQUESTED_PORT 'Internal API port' 5002 api
+  [[ -n "$DB_PORT" ]] || prompt_setting DB_PORT 'PostgreSQL port' 5432 database
+  if ! $LETSENCRYPT; then
+    printf '%s\n' "Trusted HTTPS requires DNS to point to this server and inbound ports 80/443. Choosing yes accepts Let's Encrypt subscriber terms (https://letsencrypt.org/repository/)."
+    prompt_setting LETSENCRYPT "Enable trusted HTTPS with Let's Encrypt? (yes/no)" yes https
+  fi
+  if $LETSENCRYPT; then
+    [[ -n "$EMAIL" ]] || prompt_setting EMAIL 'Certificate contact email' '' email
+  else
+    info 'Keeping an existing certificate, or using self-signed HTTPS until trusted HTTPS is configured.'
+  fi
+  info "Settings: https://$DOMAIN; API $REQUESTED_PORT; PostgreSQL $DB_PORT; trusted HTTPS: $LETSENCRYPT."
+}
+$DRY_RUN && $CHECK && die 'Use --dry-run or --check, not both.'
+if $INTERACTIVE; then
+  if ! $DRY_RUN; then [[ $EUID -eq 0 ]] || die 'Run sudo bash install.sh; use --interactive --dry-run to preview without root.'; fi
+  interactive_settings
+fi
 [[ -z "$REQUESTED_PORT" ]] || valid_port "$REQUESTED_PORT" || die 'Invalid --port (1–65535).'
 [[ -z "$REQUESTED_PORT" ]] || ((REQUESTED_PORT >= 1024)) || die '--port must be an unprivileged API port (1024–65535).'
 [[ -z "$DB_PORT" ]] || valid_port "$DB_PORT" || die 'Invalid --db-port (1–65535).'
 [[ -z "$DOMAIN" ]] || valid_domain "$DOMAIN" || die 'Use a valid dedicated hostname, without a scheme, port, or path.'
 if $LETSENCRYPT; then
-  [[ "$EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] || die '--letsencrypt requires --email with a valid contact address.'
+  valid_email "$EMAIL" || die '--letsencrypt requires --email with a valid contact address.'
 fi
-$DRY_RUN && $CHECK && die 'Use --dry-run or --check, not both.'
 if $DRY_RUN; then
   cat <<PLAN
 Dry run: no changes and no database connection.

@@ -14,7 +14,7 @@ Browser → https://assets.infocuscs.com
                                       PostgreSQL on local port 5432
 ```
 
-The generic default internal API port is 5000. On the INFOCUS shared server, SERV-IT already uses 5000 and Grow Together uses 5001; use `--port 5002`. The installer can select another free port on a first installation. It binds the API to loopback; only Nginx should expose the application publicly. PostgreSQL remains local. No Redis, MinIO, Google OAuth, or .NET components are required by this application.
+The interactive installer defaults to internal API port **5002**. On the INFOCUS shared server, SERV-IT already uses 5000 and Grow Together uses 5001. The installer can select another free port on a first installation. It binds the API to loopback; only Nginx should expose the application publicly. PostgreSQL remains local. No Redis, MinIO, Google OAuth, or .NET components are required by this application.
 
 The deployment uses a dedicated hostname at `/`. Hosting below a path such as `/assets-app/` requires additional React Router, Vite base-path, API, and cookie configuration and is not implemented by this installer.
 
@@ -22,17 +22,17 @@ The deployment uses a dedicated hostname at `/`. Hosting below a path such as `/
 
 Use Ubuntu/Debian with systemd and sudo/root access. Copy or clone the repository, including `package-lock.json` and all committed Prisma migrations, onto the server. The installer needs outbound access to official Node runtime downloads and the npm registry. It reuses a compatible Node.js 22.12+ or 24 installation, or installs a private Node runtime under `/opt/infocus-assets` without replacing the system Node used by other apps. It reuses the running local PostgreSQL server. Required system tools must already be installed; missing tools cause a preflight failure. Prepare missing OS packages separately during appropriate server maintenance, since package-manager hooks can affect shared services.
 
-Run from the repository root:
+For optional help, a guided preview, or a read-only server check, run from the repository root:
 
 ```bash
-bash scripts/install.sh --help
-sudo bash scripts/install.sh --domain assets.infocuscs.com --dry-run
-sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 --check
+bash install.sh --help
+bash install.sh --interactive --dry-run
+sudo bash install.sh --interactive --check
 ```
 
-`assets.infocuscs.com` is the intended hostname. `--dry-run` prints the plan without inspecting the server. `--check` performs actual read-only checks of dependencies, Nginx, PostgreSQL, managed paths, hostname conflicts, available ports, and build resources, then exits before deployment. Run it with sudo so it can inspect Nginx and use PostgreSQL peer authentication. It can also be run as a standalone copy of `scripts/install.sh`; normal installation requires the complete checkout.
+`assets.infocuscs.com` is the intended hostname. `--interactive` asks for settings one at a time. `--dry-run` then prints the plan without inspecting the server. `--check` performs actual read-only checks of dependencies, Nginx, PostgreSQL, managed paths, hostname conflicts, available ports, and build resources, then exits before deployment. Run the server check with sudo so it can inspect Nginx and use PostgreSQL peer authentication. The implementation remains in `scripts/install.sh`, which also accepts these options directly; normal installation requires the complete checkout.
 
-The normal installer targets a local PostgreSQL instance reachable by the `postgres` operating-system account through peer authentication. It detects the installed cluster port; specify `--db-port` if you need to choose a particular local cluster. It does not change another application's PostgreSQL port, database, or credentials. For remote PostgreSQL or a different administrative authentication setup, provision the database with the [database helper](DATABASE.md#database-creation-and-schema-setup) and adapt a reviewed deployment configuration instead of running this local-server installer unchanged.
+The normal installer targets a local PostgreSQL instance reachable by the `postgres` operating-system account through peer authentication. The wizard asks for its port, defaulting to `5432`; enter the intended local cluster's port if different. In noninteractive mode, `--db-port` selects the cluster, or the script detects it when unambiguous. It does not change another application's PostgreSQL port, database, or credentials. For remote PostgreSQL or a different administrative authentication setup, provision the database with the [database helper](DATABASE.md#database-creation-and-schema-setup) and adapt a reviewed deployment configuration instead of running this local-server installer unchanged.
 
 The installer uses database `asset_management`, schema-owner login `infocus_assets_owner`, and runtime login `infocus_assets`. A database with that name but another owner is refused, including a database previously created under a developer's `postgres` login. Reusing/moving existing local data onto this production setup requires a planned backup/restore and ownership/grant review; it is not an automatic takeover. Likewise, an unrelated existing `infocus-assets` OS account, managed-path directory, or conflicting Nginx hostname is refused.
 
@@ -40,15 +40,36 @@ Nginx must use the standard `/etc/nginx/sites-enabled/*` include inside its HTTP
 
 ## 2. Install the application
 
-```bash
-sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
-```
-
-Optional explicit ports:
+In an interactive terminal on the Linux server, change to the repository root and run:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432
+sudo bash install.sh
 ```
+
+If your checkout predates the root launcher, fetch the update with `git pull origin main` first. The installer does not run Git commands or update your checkout automatically.
+
+On a first installation, answer the questions in this order:
+
+| Question                                  | Default / answer                                                           |
+| ----------------------------------------- | -------------------------------------------------------------------------- |
+| Dedicated application hostname            | Press Enter for `assets.infocuscs.com`.                                    |
+| Internal API port                         | Press Enter for `5002`, leaving existing apps on 5000/5001 in place.       |
+| Local PostgreSQL port                     | Press Enter for `5432`, or enter your existing cluster's port.             |
+| Request trusted HTTPS with Let's Encrypt? | Press Enter for **yes**, or enter **no** if DNS is not ready.              |
+| Certificate contact email                 | Enter a real email address; required only when HTTPS issuance is selected. |
+
+Invalid answers are requested again. Answering the questions starts the selected operation automatically; there is no additional approval prompt. Ending input before the questions are complete aborts the run. The wizard requires an interactive terminal; use explicit options for automation.
+
+Managed reruns retain the stored hostname, API port, and PostgreSQL port and show those settings instead of asking to change them. Only the HTTPS choice and, when needed, contact email are requested. Existing credentials and trusted certificates are preserved.
+
+The root `install.sh` forwards to `scripts/install.sh`, keeping the deployment script in the `scripts/` folder. Existing options remain supported. For example, the noninteractive equivalent is:
+
+```bash
+sudo bash install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 \
+  --letsencrypt --email YOUR_REAL_EMAIL
+```
+
+Replace `YOUR_REAL_EMAIL` with your actual certificate contact address. DNS and inbound ports 80/443 must be ready before requesting Let's Encrypt; see the HTTPS section below. The wizard's default choice requests the trusted certificate during this first run.
 
 The installer:
 
@@ -97,9 +118,9 @@ The server inspection found the two existing apps healthy over HTTPS, the new DN
 
 `app.env` is readable by root and the application service group (mode 640); `maintenance.env` is root-only (mode 600). Keep both out of source control, tickets, screenshots, and application logs. The runtime file contains the restricted database URL; the maintenance file contains the schema-owner URL. Do not give the API the maintenance credentials.
 
-## 3. Add DNS and enable trusted HTTPS
+## 3. DNS and trusted HTTPS
 
-Initial installation uses a self-signed certificate, allowing HTTPS routing checks without waiting for DNS. Browsers will warn until a trusted certificate is installed. This is for setup verification; install a trusted certificate before users begin working.
+The interactive installer defaults to requesting a trusted Let's Encrypt certificate during installation. Prepare DNS before selecting this option. The installer temporarily uses a self-signed certificate while configuring its HTTPS route and ACME webroot, then replaces it with the issued trusted certificate in the same run.
 
 In your DNS provider:
 
@@ -113,14 +134,13 @@ Check DNS from a machine outside the server:
 nslookup assets.infocuscs.com
 ```
 
-Once DNS resolves to this server, rerun the installer with your certificate contact email:
+If you previously chose **no** because DNS was not ready, browsers will show a warning for the first installation's self-signed certificate. Once DNS resolves, run the installer again, choose **yes** for trusted HTTPS, and enter your certificate contact email:
 
 ```bash
-sudo bash scripts/install.sh --domain assets.infocuscs.com \
-  --letsencrypt --email admin@company.com
+sudo bash install.sh
 ```
 
-The installer requests a Let's Encrypt certificate using the Nginx-served ACME webroot and configures certificate renewal/reload support. Providing `--letsencrypt --email` accepts Let's Encrypt's subscriber terms for that request. This rerun also builds a new release using the checkout you run it from, while retaining existing credentials. Read any certificate failure and correct DNS, port 80 reachability, or hostname conflicts before retrying. Existing trusted certificates are retained on subsequent runs, including runs without `--letsencrypt`.
+The installer requests a Let's Encrypt certificate using the Nginx-served ACME webroot and configures certificate renewal/reload support. Choosing trusted HTTPS and providing your email, or using `--letsencrypt --email` explicitly, accepts Let's Encrypt's subscriber terms for that request. This rerun also builds a new release using the checkout you run it from, while retaining existing credentials. Read any certificate failure and correct DNS, port 80 reachability, or hostname conflicts before retrying. Existing trusted certificates are retained on subsequent runs, including when choosing **no** to a new certificate request. Install a trusted certificate before users begin working.
 
 Verify normal certificate trust without `-k`:
 
@@ -201,7 +221,7 @@ For a 502 response, inspect the API journal, selected `PORT`, and Nginx upstream
 3. Run the same installer from that checkout:
 
    ```bash
-   sudo bash scripts/install.sh --domain assets.infocuscs.com
+   sudo bash install.sh
    ```
 
 4. It builds a new timestamped release, retains configuration/secrets, applies pending migrations, switches the active release, restarts the service, and checks health. Verify login, inventory, and one controlled workflow through the final domain.
