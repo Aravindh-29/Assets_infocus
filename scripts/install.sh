@@ -35,7 +35,7 @@ INFOCUS Asset Management — Ubuntu/Debian installer (systemd required)
   bash install.sh --interactive --dry-run
   sudo bash scripts/install.sh --domain assets.example.com
   sudo bash scripts/install.sh --domain assets.example.com --check
-  sudo bash scripts/install.sh --domain assets.example.com --letsencrypt --email admin@example.com
+  sudo bash scripts/install.sh --domain assets.example.com --letsencrypt
   bash scripts/install.sh --domain assets.example.com --dry-run
 
 Options:
@@ -44,13 +44,13 @@ Options:
   --port PORT      First-install API port (default 5000; occupied ports are skipped).
   --db-port PORT   Existing local PostgreSQL cluster port; otherwise auto-detect.
   --letsencrypt   Obtain/keep a trusted certificate using Certbot webroot (DNS must work).
-  --email EMAIL   Required with --letsencrypt; accepts Let's Encrypt subscriber terms.
+  --email EMAIL   Optional certificate contact; otherwise register without email.
   --dry-run       Print the plan; do not install, create files, or contact the database.
   --check         Read-only server checks, including PostgreSQL; do not install or change services.
   --help          Print this help.
 
 With no arguments, asks for hostname [assets.infocuscs.com], API port [5002],
-PostgreSQL port [5432], trusted HTTPS [yes], and the certificate contact email.
+PostgreSQL port [5432], and trusted HTTPS [yes]. No email address is requested.
 Press Enter to accept a default. Existing managed hostname/ports are retained.
 After the answers, server checks and installation start automatically.
 Combine --interactive with --dry-run or --check to inspect without deploying.
@@ -60,7 +60,7 @@ and /etc/nginx/sites-available/infocus-assets.conf, enabled as zz-infocus-assets
 Requires installed prerequisites and already-running Nginx/PostgreSQL. It does not
 install OS packages, start shared services, or change their boot/renewal settings.
 Without --letsencrypt, HTTPS initially uses a self-signed certificate (browser warning).
-After adding DNS, rerun with --letsencrypt --email. Existing trusted certificates persist.
+After adding DNS, rerun with --letsencrypt. Existing trusted certificates persist.
 Reruns preserve credentials, migrate forward, build a new release, and restart the app.
 The database is asset_management; dedicated roles are infocus_assets_owner and infocus_assets.
 No sample data or administrator is created. See docs/DEPLOYMENT.md for first-admin bootstrap.
@@ -95,6 +95,10 @@ valid_domain() {
 read_setting() { awk -v key="$2" 'index($0,key "=")==1 { sub(/^[^=]*=/, ""); sub(/\r$/, ""); print; exit }' "$1"; }
 node_supported() { "$1" -e 'let [a,b]=process.versions.node.split(".").map(Number);process.exit((a===22&&b>=12)||a===24?0:1)' >/dev/null 2>&1; }
 valid_email() { [[ "$1" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]]; }
+certificate_account_args() {
+  CERTBOT_ACCOUNT_ARGS=(--register-unsafely-without-email)
+  [[ -z "$EMAIL" ]] || CERTBOT_ACCOUNT_ARGS=(--email "$EMAIL")
+}
 prompt_setting() {
   local output_name=$1 label=$2 default=$3 kind=$4 answer
   while true; do
@@ -110,8 +114,6 @@ prompt_setting() {
         if ! valid_port "$answer" || ((10#$answer < 1024)); then printf '%s\n' 'Enter an API port from 1024 to 65535.' >&2; continue; fi;;
       database)
         valid_port "$answer" || { printf '%s\n' 'Enter a PostgreSQL port from 1 to 65535.' >&2; continue; };;
-      email)
-        valid_email "$answer" || { printf '%s\n' 'Enter a valid contact email address for the HTTPS certificate.' >&2; continue; };;
       https)
         case "${answer,,}" in
           y|yes) answer=true;; n|no) answer=false;;
@@ -152,9 +154,7 @@ interactive_settings() {
     printf '%s\n' "Trusted HTTPS requires DNS to point to this server and inbound ports 80/443. Choosing yes accepts Let's Encrypt subscriber terms (https://letsencrypt.org/repository/)."
     prompt_setting LETSENCRYPT "Enable trusted HTTPS with Let's Encrypt? (yes/no)" yes https
   fi
-  if $LETSENCRYPT; then
-    [[ -n "$EMAIL" ]] || prompt_setting EMAIL 'Certificate contact email' '' email
-  else
+  if ! $LETSENCRYPT; then
     info 'Keeping an existing certificate, or using self-signed HTTPS until trusted HTTPS is configured.'
   fi
   info "Settings: https://$DOMAIN; API $REQUESTED_PORT; PostgreSQL $DB_PORT; trusted HTTPS: $LETSENCRYPT."
@@ -168,9 +168,10 @@ fi
 [[ -z "$REQUESTED_PORT" ]] || ((REQUESTED_PORT >= 1024)) || die '--port must be an unprivileged API port (1024–65535).'
 [[ -z "$DB_PORT" ]] || valid_port "$DB_PORT" || die 'Invalid --db-port (1–65535).'
 [[ -z "$DOMAIN" ]] || valid_domain "$DOMAIN" || die 'Use a valid dedicated hostname, without a scheme, port, or path.'
-if $LETSENCRYPT; then
-  valid_email "$EMAIL" || die '--letsencrypt requires --email with a valid contact address.'
+if [[ -n "$EMAIL" ]]; then
+  valid_email "$EMAIL" || die '--email must be a valid contact address when supplied.'
 fi
+certificate_account_args
 if $DRY_RUN; then
   cat <<PLAN
 Dry run: no changes and no database connection.
@@ -497,8 +498,33 @@ if ! $HEALTH; then
   die "API health check failed. Previous release restored when available; database migrations were not reversed. Inspect journalctl -u $APP."
 fi
 
+prepare_acme_webroot() {
+  local directory
+  # Each ancestor needs explicit traversal permission: umask 027 otherwise makes
+  # implicit parents 0750, so the unprivileged Nginx worker returns HTTP 403.
+  for directory in "$ROOT/acme" "$ROOT/acme/.well-known" "$ROOT/acme/.well-known/acme-challenge"; do
+    [[ ! -L "$directory" ]] || die "ACME directory must not be a symlink: $directory."
+    install -d -m 755 "$directory"
+  done
+}
+verify_acme_webroot() {
+  local token probe response attempt served=false
+  token="infocus-check-$(openssl rand -hex 16)"
+  probe="$ROOT/acme/.well-known/acme-challenge/$token"
+  printf '%s' "$token" > "$probe"
+  chmod 644 "$probe"
+  # A graceful reload returns before all new workers are ready to serve the site.
+  for attempt in 1 2 3 4 5; do
+    if response=$(curl --fail --silent --max-time 5 --noproxy '*' --resolve "$DOMAIN:80:127.0.0.1" "http://$DOMAIN/.well-known/acme-challenge/$token") && [[ "$response" == "$token" ]]; then served=true; break; fi
+    ((attempt == 5)) || sleep 1
+  done
+  rm -f -- "$probe"
+  $served || die 'Nginx cannot serve the public ACME challenge file. Check directory traversal permissions and the HTTP challenge route before retrying certificate issuance.'
+  info 'ACME challenge file served successfully through Nginx.'
+}
 info 'Configuring the dedicated Nginx route and HTTPS.'
-install -d -m 755 /etc/nginx/sites-available /etc/nginx/sites-enabled "$ROOT/acme/.well-known/acme-challenge"
+install -d -m 755 /etc/nginx/sites-available /etc/nginx/sites-enabled
+prepare_acme_webroot
 TLS_DIR=$CONFIG/tls
 install -d -m 700 "$TLS_DIR"
 CERT=$TLS_DIR/cert.pem; KEY=$TLS_DIR/key.pem
@@ -580,8 +606,9 @@ apply_nginx() {
 }
 apply_nginx
 if $LETSENCRYPT; then
+  verify_acme_webroot
   info "Requesting trusted HTTPS for $DOMAIN. DNS and inbound TCP 80 must already reach this host."
-  certbot certonly --non-interactive --agree-tos --email "$EMAIL" --webroot -w "$ROOT/acme" --cert-name "$APP" -d "$DOMAIN" --keep-until-expiring || die "Certbot failed. The working existing/self-signed site remains; fix DNS/firewall and rerun with --letsencrypt --email $EMAIL."
+  certbot certonly --non-interactive --agree-tos "${CERTBOT_ACCOUNT_ARGS[@]}" --webroot -w "$ROOT/acme" --cert-name "$APP" -d "$DOMAIN" --keep-until-expiring || die 'Certbot failed. The working existing/self-signed site remains; review the challenge error and rerun sudo bash install.sh after correcting it. No email is required.'
   CERT=/etc/letsencrypt/live/$APP/fullchain.pem; KEY=/etc/letsencrypt/live/$APP/privkey.pem
   apply_nginx
   HOOK=/etc/letsencrypt/renewal-hooks/deploy/infocus-assets-reload
@@ -601,6 +628,8 @@ fi
 info 'Verifying HTTPS, API routing, and client-side page routing without relying on DNS.'
 CURL_TLS=()
 [[ "$CERT" != "$TLS_DIR/cert.pem" ]] || CURL_TLS=(--cacert "$CERT")
+# Allow graceful-reload workers to adopt the new certificate before failing.
+CURL_TLS+=(--retry 5 --retry-all-errors --retry-delay 1 --retry-max-time 20)
 curl --fail --silent --show-error --noproxy '*' "${CURL_TLS[@]}" --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/health" | "$NODE" -e 'let x="";process.stdin.on("data",c=>x+=c);process.stdin.on("end",()=>{try{let j=JSON.parse(x);process.exit(j.success&&j.data?.database==="connected"?0:1)}catch{process.exit(1)}})' || die 'HTTPS API/database verification failed.'
 curl --fail --silent --show-error --noproxy '*' "${CURL_TLS[@]}" --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/login" -o "$WORK/login.html"
 cmp -s "$WORK/login.html" "$RELEASE/frontend/dist/index.html" || die 'Nginx did not serve the application SPA for /login; check includes/sites.'
@@ -610,7 +639,7 @@ info "Verified: INFOCUS is running at https://$DOMAIN (API on loopback:$PORT)."
 printf '\nNginx site: %s\nService: sudo systemctl status %s\nLogs: sudo journalctl -u %s -f\n' "$SITE" "$APP" "$APP"
 printf 'Add your DNS A/AAAA record to this server. Expose TCP 80/443; keep PostgreSQL and API ports private.\n'
 if [[ "$CERT" == "$TLS_DIR/cert.pem" ]]; then
-  printf 'HTTPS currently uses a self-signed certificate. After DNS, rerun with --letsencrypt --email YOUR_EMAIL.\n'
+  printf 'HTTPS currently uses a self-signed certificate. After DNS, rerun sudo bash install.sh and choose trusted HTTPS. No email is required.\n'
 fi
 printf '\nCreate the first administrator (no demo accounts are installed):\n'
 printf '  cd %s/current/backend\n' "$ROOT"

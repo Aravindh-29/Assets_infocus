@@ -51,20 +51,21 @@ def terminal_run(arguments, answers, cwd=ROOT, script=None):
 
 
 class InstallInputTests(unittest.TestCase):
-    def test_defaults_then_email_produce_preview(self):
-        status, output = terminal_run(["--interactive", "--dry-run"], "\n\n\n\nops@example.com\n")
+    def test_four_defaults_produce_preview_without_email(self):
+        status, output = terminal_run(["--interactive", "--dry-run"], "\n\n\n\n")
         self.assertEqual(status, 0, output)
         self.assertIn("assets.infocuscs.com; API 5002; PostgreSQL 5432; trusted HTTPS: true", output)
         self.assertIn("HTTPS: Let's Encrypt", output)
+        self.assertNotIn("Certificate contact email:", output)
         self.assertNotIn("Checking installed prerequisites", output)
 
     def test_invalid_fields_retry_in_order(self):
-        answers = "https://invalid/path\nassets.infocuscs.com\n80\n65536\n5002\nwrong\n5432\nmaybe\nyes\ninvalid-email\n\nops@example.com\n"
+        answers = "https://invalid/path\nassets.infocuscs.com\n80\n65536\n5002\nwrong\n5432\nmaybe\nyes\n"
         status, output = terminal_run(["--interactive", "--dry-run"], answers)
         self.assertEqual(status, 0, output)
-        for error in ["Enter a hostname", "Enter an API port", "Enter a PostgreSQL port", "Enter yes or no", "Enter a valid contact email"]:
+        for error in ["Enter a hostname", "Enter an API port", "Enter a PostgreSQL port", "Enter yes or no"]:
             self.assertIn(error, output)
-        self.assertGreaterEqual(output.count("Certificate contact email:"), 3)
+        self.assertNotIn("Certificate contact email:", output)
 
     def test_custom_values_and_no_certificate_skip_email(self):
         status, output = terminal_run(["--interactive", "--dry-run"], "assets.other.test\n6002\n5433\nno\n")
@@ -73,7 +74,7 @@ class InstallInputTests(unittest.TestCase):
         self.assertNotIn("Certificate contact email:", output)
 
     def test_end_of_input_aborts_before_execution(self):
-        status, output = terminal_run(["--interactive", "--dry-run"], "\n\n\n\n\x04")
+        status, output = terminal_run(["--interactive", "--dry-run"], "\n\n\n\x04")
         self.assertNotEqual(status, 0, output)
         self.assertIn("Input ended before setup was complete", output)
         self.assertNotIn("Dry run: no changes", output)
@@ -81,13 +82,43 @@ class InstallInputTests(unittest.TestCase):
 
     def test_explicit_values_are_not_prompted_again(self):
         status, output = terminal_run(["--interactive", "--dry-run", "--domain", "assets.explicit.test",
-                                      "--port", "6001", "--db-port", "5434", "--letsencrypt"], "ops@example.com\n")
+                                      "--port", "6001", "--db-port", "5434", "--letsencrypt"], "")
         self.assertEqual(status, 0, output)
         self.assertNotIn("Application hostname [", output)
         self.assertNotIn("Internal API port [", output)
         self.assertNotIn("Enable trusted HTTPS", output)
-        self.assertIn("Certificate contact email:", output)
+        self.assertNotIn("Certificate contact email:", output)
         self.assertIn("assets.explicit.test; API 6001; PostgreSQL 5434", output)
+
+    def test_noninteractive_https_does_not_require_email(self):
+        result = subprocess.run(["bash", str(ROOT / "install.sh"), "--domain", "assets.infocuscs.com",
+                                 "--letsencrypt", "--dry-run"], stdin=subprocess.DEVNULL,
+                                text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("HTTPS: Let's Encrypt", result.stdout)
+
+    def test_certificate_account_arguments_default_to_no_email(self):
+        source = (ROOT / "scripts/install.sh").read_text()
+        function = source.split("certificate_account_args() {", 1)[1].split("\n}", 1)[0]
+        for email, expected in [("", ["--register-unsafely-without-email"]),
+                                ("ops@example.com", ["--email", "ops@example.com"])]:
+            with self.subTest(email=email):
+                result = subprocess.run(["bash", "-c", "set -euo pipefail\nEMAIL=" + shlex.quote(email)
+                                         + "\ncertificate_account_args() {" + function
+                                         + '\n}\ncertificate_account_args\nprintf "%s\\n" "${CERTBOT_ACCOUNT_ARGS[@]}"'],
+                                        text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.splitlines(), expected)
+
+    def test_explicit_optional_email_is_validated(self):
+        for email, expected in [("ops@example.com", 0), ("invalid-email", 1)]:
+            with self.subTest(email=email):
+                result = subprocess.run(["bash", str(ROOT / "install.sh"), "--domain", "assets.infocuscs.com",
+                                         "--letsencrypt", "--email", email, "--dry-run"],
+                                        stdin=subprocess.DEVNULL, text=True, capture_output=True)
+                self.assertEqual(result.returncode, expected, result.stderr)
+                if expected:
+                    self.assertIn("--email must be a valid contact address", result.stderr)
 
     def test_flags_and_launcher_work_without_a_terminal_from_another_directory(self):
         with tempfile.TemporaryDirectory(prefix="infocus launcher with spaces ") as directory:

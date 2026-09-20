@@ -50,26 +50,25 @@ If your checkout predates the root launcher, fetch the update with `git pull ori
 
 On a first installation, answer the questions in this order:
 
-| Question                                  | Default / answer                                                           |
-| ----------------------------------------- | -------------------------------------------------------------------------- |
-| Dedicated application hostname            | Press Enter for `assets.infocuscs.com`.                                    |
-| Internal API port                         | Press Enter for `5002`, leaving existing apps on 5000/5001 in place.       |
-| Local PostgreSQL port                     | Press Enter for `5432`, or enter your existing cluster's port.             |
-| Request trusted HTTPS with Let's Encrypt? | Press Enter for **yes**, or enter **no** if DNS is not ready.              |
-| Certificate contact email                 | Enter a real email address; required only when HTTPS issuance is selected. |
+| Question                                  | Default / answer                                                     |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| Dedicated application hostname            | Press Enter for `assets.infocuscs.com`.                              |
+| Internal API port                         | Press Enter for `5002`, leaving existing apps on 5000/5001 in place. |
+| Local PostgreSQL port                     | Press Enter for `5432`, or enter your existing cluster's port.       |
+| Request trusted HTTPS with Let's Encrypt? | Press Enter for **yes**, or enter **no** if DNS is not ready.        |
 
-Invalid answers are requested again. Answering the questions starts the selected operation automatically; there is no additional approval prompt. Ending input before the questions are complete aborts the run. The wizard requires an interactive terminal; use explicit options for automation.
+Invalid answers are requested again. Answering the four questions starts the selected operation automatically; there is no additional approval prompt. No certificate email address is requested or required. Ending input before the questions are complete aborts the run. The wizard requires an interactive terminal; use explicit options for automation.
 
-Managed reruns retain the stored hostname, API port, and PostgreSQL port and show those settings instead of asking to change them. Only the HTTPS choice and, when needed, contact email are requested. Existing credentials and trusted certificates are preserved.
+Managed reruns retain the stored hostname, API port, and PostgreSQL port and show those settings instead of asking to change them. Only the HTTPS choice is requested. Existing credentials and trusted certificates are preserved.
 
 The root `install.sh` forwards to `scripts/install.sh`, keeping the deployment script in the `scripts/` folder. Existing options remain supported. For example, the noninteractive equivalent is:
 
 ```bash
 sudo bash install.sh --domain assets.infocuscs.com --port 5002 --db-port 5432 \
-  --letsencrypt --email YOUR_REAL_EMAIL
+  --letsencrypt
 ```
 
-Replace `YOUR_REAL_EMAIL` with your actual certificate contact address. DNS and inbound ports 80/443 must be ready before requesting Let's Encrypt; see the HTTPS section below. The wizard's default choice requests the trusted certificate during this first run.
+DNS and inbound ports 80/443 must be ready before requesting Let's Encrypt; see the HTTPS section below. The wizard's default choice requests the trusted certificate during this first run. An optional `--email` flag remains available for existing automation, but omitting it registers with Certbot's `--register-unsafely-without-email` option.
 
 The installer:
 
@@ -134,13 +133,13 @@ Check DNS from a machine outside the server:
 nslookup assets.infocuscs.com
 ```
 
-If you previously chose **no** because DNS was not ready, browsers will show a warning for the first installation's self-signed certificate. Once DNS resolves, run the installer again, choose **yes** for trusted HTTPS, and enter your certificate contact email:
+If you previously chose **no** because DNS was not ready, browsers will show a warning for the first installation's self-signed certificate. Once DNS resolves, run the installer again and choose **yes** for trusted HTTPS:
 
 ```bash
 sudo bash install.sh
 ```
 
-The installer requests a Let's Encrypt certificate using the Nginx-served ACME webroot and configures certificate renewal/reload support. Choosing trusted HTTPS and providing your email, or using `--letsencrypt --email` explicitly, accepts Let's Encrypt's subscriber terms for that request. This rerun also builds a new release using the checkout you run it from, while retaining existing credentials. Read any certificate failure and correct DNS, port 80 reachability, or hostname conflicts before retrying. Existing trusted certificates are retained on subsequent runs, including when choosing **no** to a new certificate request. Install a trusted certificate before users begin working.
+The installer requests a Let's Encrypt certificate using the Nginx-served ACME webroot and configures certificate renewal/reload support. It uses noninteractive Certbot registration without email by default. Choosing trusted HTTPS, or using `--letsencrypt` explicitly, accepts Let's Encrypt's subscriber terms for that request. This rerun also builds a new release using the checkout you run it from, while retaining existing credentials. Read any certificate failure and correct DNS, port 80 reachability, or hostname conflicts before retrying. Existing trusted certificates are retained on subsequent runs, including when choosing **no** to a new certificate request. Install a trusted certificate before users begin working.
 
 Verify normal certificate trust without `-k`:
 
@@ -152,6 +151,8 @@ sudo certbot renew --dry-run
 ```
 
 Production refresh cookies are `Secure`; `APP_URL` and `CORS_ORIGIN` must use HTTPS. The Nginx HTTP listener redirects to HTTPS while allowing ACME validation. Do not turn off secure cookies or weaken the production origin configuration to avoid certificate setup.
+
+If an older installer failed certificate issuance with HTTP 403 while the API is healthy, preserve its database and managed configuration. Update the checkout and rerun `sudo bash install.sh`, choosing trusted HTTPS. The corrected installer repairs traversal permissions on its public ACME directories and tests the challenge URL before contacting Certbot. No certificate email is required. Inspect Nginx's error log if that probe still fails; do not change permissions on `/etc/infocus-assets` or private certificate keys.
 
 ## 4. Create the first administrator
 

@@ -109,9 +109,9 @@ The updated installer requires installed system prerequisites, avoids OS package
 
 ## Interactive installer verification
 
-The repository-root `install.sh` forwards to `scripts/install.sh`. Running it without arguments opens a sequential terminal prompt for the domain, API port, PostgreSQL port, trusted HTTPS, and certificate contact email. Existing managed hostname/port settings are retained. Command-line flags remain available.
+The repository-root `install.sh` forwards to `scripts/install.sh`. Running it without arguments opens four sequential terminal prompts for the domain, API port, PostgreSQL port, and trusted HTTPS. No certificate email is requested or required. Existing managed hostname/port settings are retained. Command-line flags remain available.
 
-All nine terminal-input tests passed in local Ubuntu WSL. They cover default/custom answers, invalid-input retries, HTTPS email requirements, skipping email when HTTPS is declined, EOF cancellation, explicit-flag precedence, non-terminal refusal, launching from another directory, the exact no-argument path, and retained configuration without exposing stored credentials. Tests used dry-run mode or cancelled before execution; no deployment was performed.
+All 12 terminal-input tests passed in local Ubuntu WSL. They cover the complete four-answer flow without email, default/custom answers, invalid-input retries, optional explicit-email compatibility, Certbot's no-email argument selection, EOF cancellation, flag precedence, non-terminal refusal, launching from another directory, the exact no-argument path, and retained configuration without exposing stored credentials. Tests used dry-run mode or cancelled before execution; they did not deploy an application.
 
 Repeat on Linux:
 
@@ -120,3 +120,15 @@ python3 scripts/tests/install-input.test.py
 ```
 
 Two tests require root to exercise the real no-argument sudo path and root-owned configuration; use `sudo python3 scripts/tests/install-input.test.py` to include them. Their fixtures are temporary files, and they do not contact PostgreSQL, reload Nginx, or start application services.
+
+## HTTPS recovery and ACME regression
+
+The first server installation completed its database migrations and started the INFOCUS API, but certificate issuance failed with HTTP 403. Nginx's error log identified permission denied on the public ACME challenge path: the installer used `umask 027`, and its implicitly created `acme` and `.well-known` parent directories were mode 0750. The unprivileged Nginx worker could not traverse them.
+
+The installer now explicitly creates all three public challenge directories with mode 0755 and verifies a mode-0644 probe through Nginx before requesting a certificate. It removes its probe afterward and allows for worker startup during a graceful reload. Configuration files and private keys retain their protected permissions.
+
+The isolated Nginx regression runs with a `www-data` worker when executed as root. It reproduces HTTP 403 with mode-0750 ancestors, invokes the installer's actual permission helper, verifies HTTP 200 on repeated runs, and checks probe cleanup. The two existing virtual hosts and their IPv4/IPv6 defaults continue to pass.
+
+Targeted recovery on the INFOCUS server succeeded on 21 September 2026: public challenge verification returned HTTP 200, certificate issuance without a required email succeeded, and `https://assets.infocuscs.com/login` and `/api/health` passed with trusted TLS and a connected database. The certificate expires on 19 December 2026. The existing Certbot timer is active, its stored authenticator is webroot, and the INFOCUS renewal hook is installed. Renewal was configured but a forced renewal was not performed.
+
+Both existing applications also returned HTTP 200 with valid TLS after recovery. Their Nginx configuration hashes and application process IDs/start times were unchanged; the INFOCUS API and PostgreSQL processes were also unchanged. Only the INFOCUS challenge-directory permissions, its certificate paths, and its renewal hook were repaired, followed by a graceful Nginx reload. No database reset, application rebuild, or application-service restart was required.

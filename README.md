@@ -209,9 +209,8 @@ The installer asks for each setting in order. Press **Enter** to accept a displa
 2. Internal API port — `5002`, since the other two applications use 5000 and 5001.
 3. Local PostgreSQL port — `5432`.
 4. Request trusted HTTPS with Let's Encrypt — **yes**.
-5. Certificate contact email — enter your real email address; this is required when choosing trusted HTTPS.
 
-Invalid answers are requested again. After you answer the questions, the installer runs its checks and starts installation automatically. DNS must point to this server and inbound ports 80/443 must be reachable for Let's Encrypt. Choosing trusted HTTPS and providing your email accepts its subscriber terms. On a managed rerun, the hostname and ports are retained; the wizard asks only about HTTPS and its contact email.
+Invalid answers are requested again. After you answer the four questions, the installer runs its checks and starts installation automatically. No certificate email address is requested or required. DNS must point to this server and inbound ports 80/443 must be reachable for Let's Encrypt. Choosing trusted HTTPS accepts its subscriber terms. On a managed rerun, the hostname and ports are retained; the wizard asks only about HTTPS.
 
 The root `install.sh` is a launcher; the deployment implementation remains in `scripts/install.sh`. If your server has an older checkout without the launcher, run `git pull origin main` once to fetch this update. The installer uses your current checkout and does not pull Git changes automatically. Run it in an interactive Linux terminal.
 

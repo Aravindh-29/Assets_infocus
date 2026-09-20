@@ -3,6 +3,7 @@
 import http.server
 import json
 import os
+import pwd
 from pathlib import Path
 import shutil
 import signal
@@ -44,20 +45,35 @@ def main():
     source = installer.read_text()
     function = source.split("render_nginx() {\n", 1)[1].split("\napply_nginx() {", 1)[0]
     function = "render_nginx() {\n" + function + "\nrender_nginx\n"
+    prepare = source.split("prepare_acme_webroot() {\n", 1)[1].split("\nverify_acme_webroot() {", 1)[0]
+    prepare = "set -euo pipefail\numask 027\ndie() { printf '%s\\n' \"$*\" >&2; exit 1; }\nprepare_acme_webroot() {\n" + prepare + "\nprepare_acme_webroot\n"
+    verify = source.split("verify_acme_webroot() {\n", 1)[1].split("\ninfo 'Configuring the dedicated", 1)[0]
+    verify = "verify_acme_webroot() {\n" + verify + "\nverify_acme_webroot\n"
     api = http.server.ThreadingHTTPServer(("127.0.0.1", 0), API)
     threading.Thread(target=api.serve_forever, daemon=True).start()
     nginx = None
     try:
         with tempfile.TemporaryDirectory(prefix="infocus-nginx-test-") as directory:
             work = Path(directory)
+            work.chmod(0o755)
             root = work / "app"
             dist = root / "current/frontend/dist"
             (dist / "assets").mkdir(parents=True)
             (dist / "index.html").write_text("<!doctype html><div>INFOCUS routing fixture</div>")
             (dist / "assets/app-fixture.js").write_text("console.log('INFOCUS');")
+            for folder in [root, root / "current", root / "current/frontend", dist, dist / "assets"]:
+                folder.chmod(0o755)
+            for asset in [dist / "index.html", dist / "assets/app-fixture.js"]:
+                asset.chmod(0o644)
             challenge = root / "acme/.well-known/acme-challenge"
             challenge.mkdir(parents=True)
             (challenge / "fixture").write_text("challenge-ok")
+            (challenge / "fixture").chmod(0o644)
+            # Reproduce the production failure under the installer's restrictive
+            # umask: the target directory is public but its parents are not.
+            (root / "acme").chmod(0o750)
+            (root / "acme/.well-known").chmod(0o750)
+            challenge.chmod(0o755)
             cert, key = work / "cert.pem", work / "key.pem"
             run("openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
                 "-subj", "/CN=assets.example.test", "-addext",
@@ -92,7 +108,11 @@ def main():
                     }}""")
                 (enabled / filename).write_text("\n".join(blocks))
             config = work / "nginx.conf"
-            config.write_text(f"""pid {work}/nginx.pid;
+            worker = ""
+            if os.geteuid() == 0:
+                pwd.getpwnam("www-data")
+                worker = "user www-data;\n"
+            config.write_text(f"""{worker}pid {work}/nginx.pid;
 error_log {work}/error.log;
 events {{ worker_connections 64; }}
 http {{
@@ -160,9 +180,19 @@ http {{
                 assert request("/assets/app-fixture.js") == ["console.log('INFOCUS');", "200"]
                 assert request("/assets/missing.js")[1] == "404"
                 assert request("/.env")[1] == "403"
+                if os.geteuid() == 0:
+                    assert request("/.well-known/acme-challenge/fixture", False)[1] == "403", "The regression fixture must reproduce unreadable ACME ancestors"
+                run("bash", input=prepare, env=env)
+                for folder in [root / "acme", root / "acme/.well-known", challenge]:
+                    assert folder.stat().st_mode & 0o777 == 0o755
                 assert request("/.well-known/acme-challenge/fixture", False) == ["challenge-ok", "200"]
+                run("bash", input=prepare, env=env)
+                assert request("/.well-known/acme-challenge/fixture", False) == ["challenge-ok", "200"]
+                probe_check = verify.replace(":80:127.0.0.1", f":{http_port}:127.0.0.1").replace("http://$DOMAIN/", f"http://$DOMAIN:{http_port}/")
+                run("bash", input=prepare + "\ninfo() { printf '%s\\n' \"$*\"; }\n" + probe_check, env=env)
+                assert sorted(p.name for p in challenge.iterdir()) == ["fixture"], "ACME preflight must remove its probe"
                 assert request("/login", False)[1] == "301"
-                print("PASS: Two existing apps and IPv4/IPv6 implicit default hosts preserved across graceful reload; Nginx master unchanged; INFOCUS HTTPS, API, SPA, static files, hidden files, ACME and HTTP redirect.")
+                print("PASS: Two existing apps and IPv4/IPv6 implicit defaults preserved; Nginx master unchanged; INFOCUS HTTPS/API/SPA/static routes; ACME ancestor-permission repair under umask027, repeatable HTTP200, and HTTP redirect.")
             finally:
                 if nginx.poll() is None:
                     nginx.terminate()
