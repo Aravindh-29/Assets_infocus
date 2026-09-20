@@ -1,0 +1,47 @@
+# Implementation contract
+
+Internal implementation coordination; user scope is the supplied comprehensive asset-management specification. All features must persist in PostgreSQL. No placeholder action buttons.
+
+## API conventions
+API prefix `/api`. Success `{success:true,data:...,message?:string,meta?:{page,pageSize,total,totalPages}}`; error `{success:false,message,errorCode,details?}`. IDs UUID strings. Dates ISO strings. Money decimal serialized string. List endpoints return data arrays with top-level meta. Query `search,page,pageSize,sortBy,sortOrder`; asset filters status,categoryId,departmentId,locationId,condition,assigned,purchaseFrom,purchaseTo,warrantyFrom,warrantyTo. Uppercase status/role/condition codes. Roles ADMIN,ASSET_MANAGER,EMPLOYEE. No employee cross-access.
+
+Auth POST /auth/login `{identifier,password,remember?}` returns `{user,accessToken}`; refresh via HttpOnly cookie POST /auth/refresh same shape. GET /auth/me returns user with employee. POST /auth/logout. POST /auth/forgot-password `{email}` generic response; development-only response data may include `resetUrl` for local verification, production SMTP. POST /auth/reset-password `{token,password}`; POST /auth/change-password `{currentPassword,newPassword}`.
+
+GET /dashboard/summary returns `{totalAssets,availableAssets,assignedAssets,underRepairAssets,lostAssets,damagedAssets,retiredAssets,disposedAssets,pendingActions,warrantiesExpiring,totalEmployees,statusDistribution:[{name,value}],categoryDistribution:[{name,value}],departmentDistribution:[{name,value}],assignmentTrend:[{month,assigned,returned}],recentActivity:AssetHistory[]}`; employee sees own scoped summary. GET /search?q= returns `{assets:[],employees:[]}` scoped by permissions.
+
+GET/POST /assets, GET/PUT/DELETE /assets/:id (soft delete); POST /assets/:id/restore (admin). GET /assets/:id/history. Asset GET includes category,department,location,assignments (active includes employee), history (detail only), repairs (detail), currentAssignment derived. GET /employees, POST/PUT/DELETE /employees(/:id) soft delete; GET /employees/:id includes department,location,user(no secrets),assignments with asset and history; GET /employees/:id/assets, /history. `GET /lookups` returns `{categories,departments,locations,employees}` scoped; manager gets all active employees. CRUD /categories,/departments,/locations using GET/POST/PUT; disable using PUT `{active:false}`. Managers permitted master data.
+
+POST /assets/:id/assign `{employeeId,assignedAt?,expectedReturnAt?,condition?,notes?}`; POST /transfer `{employeeId,transferredAt?,reason,notes?}`; POST /return `{returnedAt?,condition,accessories?:string[],damage?:string,notes?}`. Damaged/unusable return becomes DAMAGED, otherwise AVAILABLE. POST /move `{locationId,notes?}`. PATCH /status `{status,notes?}` for permitted transitions; ASSIGNED must use assign, AVAILABLE from ASSIGNED must use return. Transfer remains ASSIGNED; registered/returned/transferred are history events. Repairs close custody when received for repair; repair close returns AVAILABLE. Loss approval closes custody and preserves responsible employee in incident/history.
+
+GET /assignments,/transfers,/returns,/movements lists include asset + relevant employee data. GET/POST /repairs fields `{assetId,issue,vendor?,cost?,notes?}`; PATCH /repairs/:id `{status,vendor?,cost?,notes?}` statuses OPEN,IN_REPAIR,REPAIRED,CLOSED in order. GET/POST /maintenance and PATCH /maintenance/:id with assetId,description,scheduledAt,status,notes. GET/POST /requests body `{assetId,type,description,location?,targetEmployeeId?}`, types DAMAGE,LOST,RETURN,TRANSFER. PATCH /requests/:id `{status:APPROVED|REJECTED,resolution?}` manager approves, triggers damage/loss; return/transfer approvals require actual asset workflow to complete. Employee only own requests and assigned assets.
+
+GET/POST /offboarding `{employeeId,notes?}`; GET /offboarding/:id includes employee, items each asset/current status/resolution (derived from current assignment), status; POST /offboarding/:id/complete blocks outstanding assets. Admin loss resolution via status/request approval. GET /notifications; PATCH /notifications/:id/read; POST /notifications/read-all. GET /audit-logs admin only. GET/POST /users admin only, PUT /users/:id `{name?,role?,active?,employeeId?,password?}`; POST /users/:id/reset-password `{password}`. GET/PUT /settings admin only, key-value JSON `{organizationName,warrantyAlertDays,...}`.
+
+GET /reports/:type?format=csv|xlsx|pdf downloads export; without format returns `{columns:[{key,label}],rows:[]}`. Types inventory,assigned,available,employee-assets,movements,lost,damaged,repairs,warranty,offboarding. Optional asset ids comma separated for bulk export. Queries filtered using asset filters. GET /health public.
+
+## Prisma data model (schema agent owns backend/prisma)
+Use UUID defaults. Field names exactly as below unless coordinated. All models camelCase fields; relations should have the names indicated. CreatedAt defaults now. UpdatedAt where appropriate. String statuses/roles allow future extension; service controls known transitions.
+
+User: id,email(unique lowercase),name,passwordHash,role,active(true),mustChangePassword(false),employeeId?(unique),employee?,createdAt,updatedAt; relations refreshTokens,passwordResets,notifications. Employee: id,employeeId(unique),name,email(unique),designation?,departmentId?,department?,locationId?,location?,managerId?,manager? (self relation),status(ACTIVE),joinedAt?,deletedAt?,createdAt,updatedAt,user?,assignments.
+Department: id,name(unique),active(true),createdAt,employees,assets. Location: id,name(unique),address?,active(true),createdAt,employees,assets. AssetCategory: id,name(unique),description?,serialRequiredUnique(true),active(true),createdAt,assets.
+Asset: id,assetTag(unique),assetType,categoryId,category,manufacturer,model,serialNumber?,serialUniqueKey?(unique; categoryId + normalized serial when uniqueness required),status(AVAILABLE),condition(GOOD),purchaseDate?,purchaseCost?(Decimal),vendor?,invoiceNumber?,warrantyStart?,warrantyExpiry?,locationId?,location?,departmentId?,department?,description?,notes?,qrCode?,barcode?,createdById?,deletedAt?,createdAt,updatedAt,assignments,history,repairs,maintenance,requests. User IDs for actors in log/transaction tables may be plain strings to simplify relations (never expose password hashes).
+AssetAssignment: id,assetId,asset,employeeId,employee,assignedAt,expectedReturnAt?,returnedAt?,assignedById,returnedById?,conditionAtAssignment,conditionAtReturn?,notes?,createdAt. Add migration partial unique index assetId WHERE returnedAt IS NULL, chronological CHECKs; no history cascade deletion.
+AssetTransfer: id,assetId,asset,fromEmployeeId,fromEmployee,toEmployeeId,toEmployee,transferredAt,performedById,reason,notes?,createdAt.
+AssetReturn: id,assetId,asset,employeeId,employee,returnedAt,condition,accessories(String[]),damage?,notes?,performedById,createdAt.
+AssetMovement: id,assetId,asset,fromLocationId?,fromLocation?,toLocationId,toLocation,movedAt,performedById,notes?,createdAt.
+AssetRepair: id,assetId,asset,issue,reportedById,status(OPEN),vendor?,cost?(Decimal),notes?,openedAt,closedAt?,createdAt,updatedAt.
+AssetMaintenance: id,assetId,asset,description,scheduledAt?,status(SCHEDULED),notes?,performedById?,createdAt,updatedAt.
+AssetHistory: id,assetId,asset,eventType,previousStatus?,newStatus?,previousEmployeeId?,newEmployeeId?,previousLocationId?,newLocationId?,performedById,performedByName?,timestamp,notes?,metadata?(Json).
+AuditLog: id,userId?,userName?,action,entityType,entityId?,details?(Json),ip?,timestamp.
+AssetRequest: id,assetId,asset,employeeId,employee,type,description,location?,targetEmployeeId?,status(PENDING),resolution?,reviewedById?,reviewedAt?,createdAt,updatedAt.
+Offboarding: id,employeeId,employee,status(IN_PROGRESS),notes?,startedById,startedAt,completedAt?,items. OffboardingItem: id,offboardingId,offboarding,assetId,asset,resolution(PENDING_RETURN),resolvedAt?; unique offboardingId+assetId.
+Notification: id,userId,user,title,message,link?,readAt?,createdAt.
+RefreshToken: id,userId,user,tokenHash(unique),expiresAt,revokedAt?,createdAt.
+PasswordReset: id,userId,user,tokenHash(unique),expiresAt,usedAt?,createdAt.
+Setting: key(id),value(Json),updatedAt.
+
+## Local operation
+Frontend 127.0.0.1:5173, backend 127.0.0.1:5000, Vite `/api` proxy. Root npm workspaces. Backend uses dotenv .env in backend cwd; env tests separate database. Config validates JWT secrets. PostgreSQL local existing service port5432; credentials configured in git-ignored .env. Seed credentials development-only: admin@example.com / Admin@12345!, assetmanager@example.com / Manager@12345!, employee@example.com / Employee@12345!. Seed 10 employees,20 assets,5 categories,4 departments,3 locations with representative lifecycle history. No destructive seeding existing records. Production must disallow demo seed unless explicitly development.
+
+## Ownership
+Root owns root package/config/infra/docs/integration/e2e and coordinates dependency install. Schema agent owns backend/prisma/schema.prisma, seed.ts and SQL migration additions. Backend agent owns backend/src and backend/tests unit tests. Frontend agent owns frontend files (root created package.json; may adjust dependencies by notifying root). Coordinate mismatches in messages rather than silently changing contract.

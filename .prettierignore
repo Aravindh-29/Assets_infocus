@@ -1,0 +1,8 @@
+node_modules
+dist
+package-lock.json
+.local
+backend/prisma/migrations
+*.tsbuildinfo
+playwright-report
+test-results

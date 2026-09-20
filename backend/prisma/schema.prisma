@@ -1,0 +1,380 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                 String          @id @default(uuid()) @db.Uuid
+  email              String          @unique
+  name               String
+  passwordHash       String
+  role               String          @default("EMPLOYEE")
+  active             Boolean         @default(true)
+  mustChangePassword Boolean         @default(false)
+  employeeId         String?         @unique @db.Uuid
+  employee           Employee?       @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+  refreshTokens      RefreshToken[]
+  passwordResets     PasswordReset[]
+  notifications      Notification[]
+}
+
+model Employee {
+  id            String            @id @default(uuid()) @db.Uuid
+  employeeId    String            @unique
+  name          String
+  email         String            @unique
+  designation   String?
+  departmentId  String?           @db.Uuid
+  department    Department?       @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  locationId    String?           @db.Uuid
+  location      Location?         @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  managerId     String?           @db.Uuid
+  manager       Employee?         @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: Restrict)
+  directReports Employee[]        @relation("EmployeeManager")
+  status        String            @default("ACTIVE")
+  joinedAt      DateTime?
+  deletedAt     DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  user          User?
+  assignments   AssetAssignment[]
+  transfersFrom AssetTransfer[]  @relation("TransferFromEmployee")
+  transfersTo   AssetTransfer[]  @relation("TransferToEmployee")
+  returns       AssetReturn[]
+  requests      AssetRequest[]
+  offboardings  Offboarding[]
+
+  @@index([departmentId])
+  @@index([locationId])
+  @@index([status, deletedAt])
+}
+
+model Department {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String     @unique
+  active    Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  employees Employee[]
+  assets    Asset[]
+}
+
+model Location {
+  id            String          @id @default(uuid()) @db.Uuid
+  name          String          @unique
+  address       String?
+  active        Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  employees     Employee[]
+  assets        Asset[]
+  movementsFrom AssetMovement[] @relation("MovementFromLocation")
+  movementsTo   AssetMovement[] @relation("MovementToLocation")
+}
+
+model AssetCategory {
+  id                   String   @id @default(uuid()) @db.Uuid
+  name                 String   @unique
+  description          String?
+  serialRequiredUnique Boolean  @default(true)
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  assets               Asset[]
+}
+
+model Asset {
+  id              String             @id @default(uuid()) @db.Uuid
+  assetTag        String             @unique
+  assetType       String
+  categoryId      String             @db.Uuid
+  category        AssetCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  manufacturer    String
+  model           String
+  serialNumber    String?
+  serialUniqueKey String?            @unique
+  status          String             @default("AVAILABLE")
+  condition       String             @default("GOOD")
+  purchaseDate    DateTime?
+  purchaseCost    Decimal?           @db.Decimal(14, 2)
+  vendor          String?
+  invoiceNumber   String?
+  warrantyStart   DateTime?
+  warrantyExpiry  DateTime?
+  locationId      String?            @db.Uuid
+  location        Location?          @relation(fields: [locationId], references: [id], onDelete: Restrict)
+  departmentId    String?            @db.Uuid
+  department      Department?        @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  description     String?
+  notes           String?
+  qrCode          String?
+  barcode         String?
+  createdById     String?            @db.Uuid
+  deletedAt       DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  assignments     AssetAssignment[]
+  history         AssetHistory[]
+  repairs         AssetRepair[]
+  maintenance     AssetMaintenance[]
+  requests        AssetRequest[]
+  transfers       AssetTransfer[]
+  returns         AssetReturn[]
+  movements       AssetMovement[]
+  offboardingItems OffboardingItem[]
+
+  @@index([status, deletedAt])
+  @@index([categoryId])
+  @@index([departmentId])
+  @@index([locationId])
+  @@index([serialNumber])
+  @@index([warrantyExpiry])
+  @@index([purchaseDate])
+}
+
+model AssetAssignment {
+  id                    String    @id @default(uuid()) @db.Uuid
+  assetId               String    @db.Uuid
+  asset                 Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  employeeId            String    @db.Uuid
+  employee              Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  assignedAt            DateTime  @default(now())
+  expectedReturnAt      DateTime?
+  returnedAt            DateTime?
+  assignedById          String    @db.Uuid
+  returnedById          String?   @db.Uuid
+  conditionAtAssignment String
+  conditionAtReturn     String?
+  notes                 String?
+  createdAt             DateTime  @default(now())
+
+  @@index([assetId, assignedAt])
+  @@index([employeeId, returnedAt])
+}
+
+model AssetTransfer {
+  id             String   @id @default(uuid()) @db.Uuid
+  assetId        String   @db.Uuid
+  asset          Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  fromEmployeeId String   @db.Uuid
+  fromEmployee   Employee @relation("TransferFromEmployee", fields: [fromEmployeeId], references: [id], onDelete: Restrict)
+  toEmployeeId   String   @db.Uuid
+  toEmployee     Employee @relation("TransferToEmployee", fields: [toEmployeeId], references: [id], onDelete: Restrict)
+  transferredAt  DateTime @default(now())
+  performedById  String   @db.Uuid
+  reason         String
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  @@index([assetId, transferredAt])
+  @@index([fromEmployeeId])
+  @@index([toEmployeeId])
+}
+
+model AssetReturn {
+  id            String   @id @default(uuid()) @db.Uuid
+  assetId       String   @db.Uuid
+  asset         Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  employeeId    String   @db.Uuid
+  employee      Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  returnedAt    DateTime @default(now())
+  condition     String
+  accessories   String[] @default([])
+  damage        String?
+  notes         String?
+  performedById String   @db.Uuid
+  createdAt     DateTime @default(now())
+
+  @@index([assetId, returnedAt])
+  @@index([employeeId])
+}
+
+model AssetMovement {
+  id             String    @id @default(uuid()) @db.Uuid
+  assetId        String    @db.Uuid
+  asset          Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  fromLocationId String?   @db.Uuid
+  fromLocation   Location? @relation("MovementFromLocation", fields: [fromLocationId], references: [id], onDelete: Restrict)
+  toLocationId   String    @db.Uuid
+  toLocation     Location  @relation("MovementToLocation", fields: [toLocationId], references: [id], onDelete: Restrict)
+  movedAt        DateTime  @default(now())
+  performedById  String    @db.Uuid
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  @@index([assetId, movedAt])
+  @@index([fromLocationId])
+  @@index([toLocationId])
+}
+
+model AssetRepair {
+  id           String    @id @default(uuid()) @db.Uuid
+  assetId      String    @db.Uuid
+  asset        Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  issue        String
+  reportedById String    @db.Uuid
+  status       String    @default("OPEN")
+  vendor       String?
+  cost         Decimal?  @db.Decimal(14, 2)
+  notes        String?
+  openedAt     DateTime  @default(now())
+  closedAt     DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@index([assetId, openedAt])
+  @@index([status])
+}
+
+model AssetMaintenance {
+  id            String    @id @default(uuid()) @db.Uuid
+  assetId       String    @db.Uuid
+  asset         Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  description   String
+  scheduledAt   DateTime?
+  status        String    @default("SCHEDULED")
+  notes         String?
+  performedById String?   @db.Uuid
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@index([assetId])
+  @@index([status, scheduledAt])
+}
+
+model AssetHistory {
+  id                 String   @id @default(uuid()) @db.Uuid
+  assetId            String   @db.Uuid
+  asset              Asset    @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  eventType          String
+  previousStatus     String?
+  newStatus          String?
+  previousEmployeeId String?  @db.Uuid
+  newEmployeeId      String?  @db.Uuid
+  previousLocationId String?  @db.Uuid
+  newLocationId      String?  @db.Uuid
+  performedById      String   @db.Uuid
+  performedByName    String?
+  timestamp          DateTime @default(now())
+  notes              String?
+  metadata           Json?
+
+  @@index([assetId, timestamp])
+  @@index([timestamp])
+  @@index([previousEmployeeId])
+  @@index([newEmployeeId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String?  @db.Uuid
+  userName   String?
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  ip         String?
+  timestamp  DateTime @default(now())
+
+  @@index([timestamp])
+  @@index([userId, timestamp])
+  @@index([entityType, entityId])
+  @@index([action])
+}
+
+model AssetRequest {
+  id               String    @id @default(uuid()) @db.Uuid
+  assetId          String    @db.Uuid
+  asset            Asset     @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  employeeId       String    @db.Uuid
+  employee         Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  type             String
+  description      String
+  location         String?
+  targetEmployeeId String?   @db.Uuid
+  status           String    @default("PENDING")
+  resolution       String?
+  reviewedById     String?   @db.Uuid
+  reviewedAt       DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([assetId])
+  @@index([employeeId, status])
+  @@index([status])
+}
+
+model Offboarding {
+  id            String            @id @default(uuid()) @db.Uuid
+  employeeId    String            @db.Uuid
+  employee      Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  status        String            @default("IN_PROGRESS")
+  notes         String?
+  startedById   String            @db.Uuid
+  startedAt     DateTime          @default(now())
+  completedAt   DateTime?
+  items         OffboardingItem[]
+
+  @@index([employeeId, status])
+}
+
+model OffboardingItem {
+  id            String      @id @default(uuid()) @db.Uuid
+  offboardingId String      @db.Uuid
+  offboarding   Offboarding @relation(fields: [offboardingId], references: [id], onDelete: Restrict)
+  assetId       String      @db.Uuid
+  asset         Asset       @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  resolution    String      @default("PENDING_RETURN")
+  resolvedAt    DateTime?
+
+  @@unique([offboardingId, assetId])
+  @@index([assetId])
+}
+
+model Notification {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  title     String
+  message   String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt, createdAt])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordReset {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}

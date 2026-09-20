@@ -1,0 +1,88 @@
+# Verification record
+
+Verified on 21 September 2026 on this Windows machine with Node.js24.18.0, npm11.16.0, PostgreSQL17, and Microsoft Edge through Playwright.
+
+## Results
+
+| Check                                  | Result                                                   |
+| -------------------------------------- | -------------------------------------------------------- |
+| Prisma schema validation and migration | Passed; initial migration applied; no pending migrations |
+| Backend and frontend TypeScript        | Passed                                                   |
+| Backend production compilation         | Passed                                                   |
+| Frontend Vite production build         | Passed, with route-based chunks                          |
+| Backend unit tests                     | 47 passed                                                |
+| Frontend unit tests                    | 13 passed                                                |
+| Real PostgreSQL API integration tests  | 37 passed                                                |
+| Browser acceptance tests               | 19 passed                                                |
+| npm dependency audit                   | 0 known vulnerabilities reported at verification time    |
+| Local API readiness                    | HTTP200; PostgreSQL connected                            |
+| Desktop/mobile visual review           | Completed; no horizontal viewport overflow at390px       |
+
+**116 automated tests passed.** Tests run against application logic and a real, separately migrated PostgreSQL test database. The browser suite starts its own API/frontend on ports5001/5174. It does not modify the development application's sample inventory.
+
+The UI modernization also preserves all backend/schema source files (verified by SHA-256 comparison). See [UI modernization](UI-MODERNIZATION.md) for its plan, implementation and verification scope. Dependency versions were unchanged during the UI work; the dependency-audit row records the initial verification result.
+
+## Browser coverage
+
+1. An administrator creates two employees and a laptop, assigns it, transfers custody, returns it, verifies the current holder/timeline, starts offboarding, accounts for the outstanding asset, completes offboarding, and downloads CSV.
+2. Nineteen administrative/profile screens load API data without browser application errors or unexpected routing.
+3. A newly provisioned user completes the required password change, reaches the dashboard, and retains their session after a full page reload.
+4. An employee sees their own inventory/profile and cannot navigate into user administration or register assets.
+5. Desktop and390px mobile dashboards/assets render without viewport overflow. Screenshots are generated under `.local/` for visual review.
+6. Sidebar state persists; command search, profile menu, modal focus, mobile drawer and logout support keyboard interaction.
+7. Asset/employee quick views preserve list context, expose real records and restore focus when dismissed.
+8. Advanced filters, chips and table/card modes reflect API data. CSV import saves actual records, and bulk movement reports a concurrently changed record while preserving successful changes.
+9. Dashboard metrics/drilldowns match API results. Report counts, filters and downloaded CSV contents are verified against real fixtures; notification read/unread controls update the inbox.
+10. Employee directory filters/counts match custody data; offboarding progress prevents completion until the outstanding asset is accounted for.
+11. Forms disable duplicate submission and dismissal while a request is pending.
+
+API regression tests additionally cover token rotation/replay, access restrictions, duplicate tags/serials, concurrent assignments, invalid transitions, damaged returns and repairs, movements, administrator-approved offboarding loss, incident approval, historical reports, all three export formats, soft deletion/restoration, immutable history, password/reset-link invalidation, and audit context.
+
+## Repeat locally
+
+```powershell
+npm.cmd run typecheck
+npm.cmd test
+npm.cmd run test:integration
+npm.cmd run test:e2e
+npm.cmd run build
+npm.cmd audit
+```
+
+Integration/browser tests require `backend/.env.test` pointing to a separate database whose name ends in `_test`; create/migrate/seed it with `npm run db:test:setup`. Test records deliberately retain their append-only history and use unique identifiers on each run.
+
+The browser suite defaults to Microsoft Edge, already installed on this computer. To use Google Chrome, set `PLAYWRIGHT_CHANNEL=chrome`. On a machine without either browser, install a supported browser or adapt the Playwright channel and install Playwright Chromium. Browser traces and an HTML report are written to `test-results/` and `playwright-report/` when the tests run.
+
+## Verification boundaries
+
+Dockerfiles and Compose configuration are included, but Docker is not installed on this machine, so the container stack was not executed here. Local execution uses the installed PostgreSQL17 service directly.
+
+External SMTP delivery, HTTPS termination, cloud deployment, backup scheduling, and enterprise integrations require target-environment configuration. Password recovery is exercised locally through development reset links. No production deployment, external integration, penetration test, or sustained load test was performed.
+
+## Database setup and Nginx installer verification
+
+Verified on 21 September 2026 for the new setup/deployment scripts:
+
+| Check                                                                           | Result                                                      |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Bash syntax for `scripts/setup-db.sh` and `scripts/install.sh`                  | Passed; scripts use LF line endings                         |
+| Installer help, dry run, and invalid-option checks                              | Passed; no system deployment performed                      |
+| Database helper JavaScript syntax, help, and dry run                            | Passed                                                      |
+| Real PostgreSQL setup-helper scenarios                                          | 10 passed; Node reports 11 including the parent test        |
+| Generated Nginx configuration syntax and HTTPS                                  | Passed using isolated loopback ports under Ubuntu 22.04 WSL |
+| Nginx API path/query preservation and forwarded HTTPS header                    | Passed against a temporary local API fixture                |
+| SPA `/login` and `/assets/:id` routes                                           | Passed                                                      |
+| Static files, missing-file 404, hidden-file rejection, ACME path, HTTP redirect | Passed                                                      |
+| Existing local frontend and database-backed API health after verification       | HTTP 200; PostgreSQL connected                              |
+
+The database test creates uniquely named disposable databases and roles on the installed PostgreSQL 17 server. It verifies creation and migration, no automatic demo users, preservation of rows/migration history on rerun, owner/runtime password preservation, rejection of excessive runtime privileges/ownership, unknown migration history, a disabled history trigger, unrelated populated databases, wrong ownership, and reserved database names. Cleanup completed. The application's development and integration-test databases were not changed by this verification.
+
+Repeat the database checks using the protected configuration described in [database helper tests](DATABASE.md#testing-the-setup-helper). Repeat the Nginx checks on Linux with Python 3, Bash, OpenSSL, curl, and Nginx installed:
+
+```bash
+python3 scripts/tests/nginx-routing.test.py
+```
+
+The Nginx test extracts the installer's actual server-block template, uses a temporary certificate and files, launches its own Nginx process on temporary loopback ports, and removes the fixtures afterward. It does not edit `/etc/nginx` or restart the system Nginx service.
+
+These checks do not constitute a full server installation. Package installation, systemd provisioning, public DNS, Let's Encrypt issuance/renewal, and the complete installer upgrade/rollback flow still need verification on the intended Ubuntu/Debian server. Existing application-suite results above were not rerun for these documentation and setup-script changes.
