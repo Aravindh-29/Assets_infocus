@@ -56,7 +56,7 @@ test('the asset orbit supports dragging, keyboard rotation, and pausing', async 
   await page.getByRole('button', { name: 'Reset orbit', exact: true }).click();
   await expect(orbit).toHaveAttribute('data-rotation-x', initialX!);
   await expect(orbit).toHaveAttribute('data-rotation-y', initialY!);
-  await page.getByLabel('Email or employee ID').focus();
+  await page.getByLabel('Username, email or employee ID').focus();
   await page.mouse.move(1300, 900);
   await page.screenshot({ path: '.local/login-desktop.png', fullPage: true, animations: 'disabled' });
 });
@@ -89,7 +89,7 @@ test('reduced motion starts still while manual controls and the form remain usab
   await orbit.focus();
   await page.keyboard.press('ArrowRight');
   await expect(orbit).not.toHaveAttribute('data-rotation-y', motion.before[1]!);
-  await page.getByLabel('Email or employee ID').fill('admin@example.com');
+  await page.getByLabel('Username, email or employee ID').fill('admin@example.com');
   await page.keyboard.press('Tab');
   await expect(page.getByLabel('Password', { exact: true })).toBeFocused();
   await page.getByLabel('Password', { exact: true }).fill('Admin@12345!');
@@ -117,7 +117,7 @@ test('login preserves error feedback, password visibility, and remembered sessio
     }
   });
   await page.goto('/login');
-  const identifier = page.getByLabel('Email or employee ID');
+  const identifier = page.getByLabel('Username, email or employee ID');
   const password = page.getByLabel('Password', { exact: true });
   await identifier.fill('admin@example.com');
   await password.fill('Incorrect-password');
@@ -151,16 +151,18 @@ test('the mobile login and recovery form fit the viewport and retain usable cont
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/login');
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
-  await expect(page.getByLabel('Email or employee ID')).toBeVisible();
+  await expect(page.getByLabel('Username, email or employee ID')).toBeVisible();
   await expect(page.getByLabel('Password', { exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Sign in', exact: true }).click();
   await expect(page.locator('#workspace-sign-in')).toBeFocused();
-  await expect(page.getByLabel('Email or employee ID')).toBeInViewport();
+  await expect(page.getByLabel('Username, email or employee ID')).toBeInViewport();
   const submit = page.getByRole('button', { name: 'Sign in to workspace' });
   await expect(submit).toBeInViewport();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
-  expect(await page.locator('.login-panel').evaluate((panel) => panel.scrollHeight <= panel.clientHeight)).toBe(true);
+  expect(
+    await page.locator('.login-panel').evaluate((panel) => panel.scrollHeight <= panel.clientHeight),
+  ).toBe(true);
   await page.screenshot({ path: '.local/login-mobile.png', fullPage: true, animations: 'disabled' });
   await page.getByRole('link', { name: 'Forgot password?' }).click();
   await expect(page).toHaveURL(/\/forgot-password$/);
@@ -169,7 +171,9 @@ test('the mobile login and recovery form fit the viewport and retain usable cont
   await expect(page.getByRole('button', { name: 'Send reset link' })).toBeEnabled();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollHeight <= innerHeight)).toBe(true);
-  expect(await page.locator('.login-panel').evaluate((panel) => panel.scrollHeight <= panel.clientHeight)).toBe(true);
+  expect(
+    await page.locator('.login-panel').evaluate((panel) => panel.scrollHeight <= panel.clientHeight),
+  ).toBe(true);
   await page.getByRole('link', { name: /Back to sign in/ }).click();
   await expect(page).toHaveURL(/\/login$/);
   await expect(page.getByRole('button', { name: 'Sign in to workspace' })).toBeVisible();

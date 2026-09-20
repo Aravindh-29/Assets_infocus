@@ -10,7 +10,7 @@ async function adminHeaders(api: APIRequestContext) {
 
 async function signIn(page: Page) {
   await page.goto('/login');
-  await page.getByLabel('Email or employee ID').fill('admin@example.com');
+  await page.getByLabel('Username, email or employee ID').fill('admin@example.com');
   await page.getByLabel('Password', { exact: true }).fill('Admin@12345!');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await expect(page).toHaveURL(/\/$/);

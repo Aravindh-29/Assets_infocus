@@ -76,12 +76,17 @@ authRouter.post('/login', loginLimit, async (req, res) => {
     })
     .strict()
     .parse(req.body);
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ email: data.identifier.toLowerCase() }, { employee: { employeeId: data.identifier } }] },
-  });
+  // Explicit usernames take precedence if a later employee ID matches one.
+  const user =
+    (await prisma.user.findUnique({ where: { username: data.identifier.toLowerCase() } })) ??
+    (await prisma.user.findFirst({
+      where: {
+        OR: [{ email: data.identifier.toLowerCase() }, { employee: { employeeId: data.identifier } }],
+      },
+    }));
   const valid = await bcrypt.compare(data.password, user?.passwordHash ?? dummyHash);
   if (!user?.active || !valid)
-    throw new AppError(401, 'Incorrect email, employee ID, or password.', 'INVALID_CREDENTIALS');
+    throw new AppError(401, 'Incorrect username, email, employee ID, or password.', 'INVALID_CREDENTIALS');
   const session = await transaction(async (tx) => {
     const session = await createSession(tx, user.id, data.remember, user.updatedAt.getTime());
     await audit(tx, { ...user, requestIp: req.ip }, 'LOGIN', 'User', user.id);

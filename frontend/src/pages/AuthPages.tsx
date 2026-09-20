@@ -264,13 +264,13 @@ export function AuthPage({ mode = 'login' }: { mode?: 'login' | 'forgot' | 'rese
               }}
             >
               <div className="field">
-                <label htmlFor="login-identifier">Email or employee ID</label>
+                <label htmlFor="login-identifier">Username, email or employee ID</label>
                 <div className="login-input-wrap">
                   <Mail size={18} aria-hidden="true" />
                   <input
                     id="login-identifier"
                     name="identifier"
-                    placeholder="you@company.com"
+                    placeholder="Enter your username, email or employee ID"
                     autoComplete="username"
                     required
                     aria-describedby={error ? 'login-error' : undefined}

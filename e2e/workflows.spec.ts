@@ -8,7 +8,7 @@ async function login(page: Page, role: 'admin' | 'manager' | 'employee' = 'admin
     manager: ['assetmanager@example.com', 'Manager@12345!'],
     employee: ['employee@example.com', 'Employee@12345!'],
   };
-  await page.getByLabel('Email or employee ID').fill(accounts[role][0]);
+  await page.getByLabel('Username, email or employee ID').fill(accounts[role][0]);
   await page.getByLabel('Password', { exact: true }).fill(accounts[role][1]);
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -200,7 +200,7 @@ test('new users can complete their required password change and retain a session
   });
   expect(userResult.ok()).toBeTruthy();
   await page.goto('/login');
-  await page.getByLabel('Email or employee ID').fill(email);
+  await page.getByLabel('Username, email or employee ID').fill(email);
   await page.getByLabel('Password', { exact: true }).fill('Temporary@12345!');
   await page.getByRole('button', { name: 'Sign in to workspace' }).click();
   await expect(page).toHaveURL(/\/change-password$/);

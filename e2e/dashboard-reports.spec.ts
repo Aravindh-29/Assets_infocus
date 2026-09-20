@@ -3,7 +3,9 @@ import { readFile } from 'node:fs/promises';
 
 async function login(page: Page, employee = false) {
   await page.goto('/login');
-  await page.getByLabel('Email or employee ID').fill(employee ? 'employee@example.com' : 'admin@example.com');
+  await page
+    .getByLabel('Username, email or employee ID')
+    .fill(employee ? 'employee@example.com' : 'admin@example.com');
   await page.getByLabel('Password', { exact: true }).fill(employee ? 'Employee@12345!' : 'Admin@12345!');
   const response = page.waitForResponse(
     (result) => result.url().endsWith('/api/dashboard/summary') && result.status() === 200,

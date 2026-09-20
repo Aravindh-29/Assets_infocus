@@ -78,10 +78,11 @@ The installer:
 4. Creates the application database when missing, or reuses a compatible existing database; applies committed migrations and checks tables, constraints, indexes, and history protections.
 5. Separates the schema owner used for migrations from the restricted database login used by the running API.
 6. Installs dependencies from the lockfile and builds both workspaces.
-7. Configures systemd and its own Nginx server block, then validates Nginx before reloading it.
-8. Checks database-backed API health and the frontend/API routes through Nginx, including before public DNS resolves.
+7. Creates the first administrator only if no administrator exists, using username `amdin` and temporary password `Admin@123`, with a mandatory first-login password change.
+8. Configures systemd and its own Nginx server block, then validates Nginx before reloading it.
+9. Checks database-backed API health and the frontend/API routes through Nginx, including before public DNS resolves, and prints the new administrator credentials after successful verification.
 
-No demo seed or administrator account is created automatically. An incompatible existing database, failed migration, invalid Nginx configuration, or failed health check produces a failure rather than a false success banner. Review the reported failure before rerunning.
+No demo inventory or sample employee accounts are created. Existing administrator accounts and passwords are preserved, including disabled administrators. An incompatible existing database, administrator identifier conflict, failed migration, invalid Nginx configuration, or failed health check produces a failure rather than a false success banner. Review the reported failure before rerunning.
 
 Existing unrelated Nginx sites remain enabled. The installer owns only the INFOCUS site and service paths below. Existing databases are not dropped or reset. Applied migrations can still change the application schema, so take a recoverable backup before an upgrade.
 
@@ -94,7 +95,7 @@ Existing unrelated Nginx sites remain enabled. The installer owns only the INFOC
 - Builds run at lower priority with one CPU's worth of quota, 1536 MiB memory and 512 MiB swap limits. Preflight requires at least 1536 MiB available memory and 4 GiB available disk space. This limits build contention but does not remove all load from the shared machine.
 - Certificate renewal hooks are scoped to the INFOCUS certificate. The installer does not start or enable the shared Certbot timer; confirm an existing timer or scheduled renewal job is active before relying on automatic renewal.
 
-The server inspection found the two existing apps healthy over HTTPS, the new DNS pointing to the intended host, and the INFOCUS paths/database/roles unused. These are point-in-time checks; rerun `--check` immediately before deployment.
+The initial pre-deployment inspection found the two existing apps healthy over HTTPS, the new DNS pointing to the intended host, and the INFOCUS paths/database/roles unused at that time. These historical checks do not describe the current installation; rerun `--check` immediately before deployment.
 
 ## Paths and service names
 
@@ -156,7 +157,18 @@ If an older installer failed certificate issuance with HTTP 403 while the API is
 
 ## 4. Create the first administrator
 
-Run in a terminal on the installed server after the migrations and health checks succeed:
+The full installer performs this step automatically if no user has the `ADMIN` role. After a successful installation, sign in at [https://assets.infocuscs.com/login](https://assets.infocuscs.com/login) using:
+
+| Login field        | Initial value |
+| ------------------ | ------------- |
+| Username           | `amdin`       |
+| Temporary password | `Admin@123`   |
+
+Use the exact spelling **`amdin`**. The application requires you to replace the temporary password before accessing its features. The replacement must contain at least 10 characters, uppercase and lowercase letters, a number, and a symbol, and fit within bcrypt's 72-byte limit. The initial account uses reserved placeholder email `amdin@infocus.invalid`; this address cannot receive password-reset messages. Email recovery requires a deliverable account address and configured SMTP.
+
+On every rerun, any existing administrator, including a disabled administrator, causes automatic account creation to be skipped. Passwords, account status, and first-login password-change state are left unchanged. The installer cannot be used to reset a forgotten password or reactivate an account. If an earlier attempt created this administrator but failed a later deployment check, rerunning retains that same account and its current password. An unrelated account or employee using the reserved identifier causes a clear failure rather than an account takeover.
+
+The standalone database helper does not create administrators. For a manual deployment that has no administrator, the interactive `admin:create` command remains available. On an installer-managed server, its environment-aware equivalent is:
 
 ```bash
 cd /opt/infocus-assets/current/backend
@@ -166,7 +178,7 @@ sudo -u infocus-assets /opt/infocus-assets/bin/node \
   /opt/infocus-assets/current/backend/scripts/create-admin.ts
 ```
 
-This loads the installed environment without evaluating it as shell code. Enter the administrator email, name, and hidden password. Passwords must contain at least 12 characters, uppercase and lowercase letters, a number, and a symbol, and fit within bcrypt's 72-byte limit. The account must change its temporary password at first login.
+This optional command loads the installed environment without evaluating it as shell code. Enter the administrator email, name, and hidden strong password. The manual CLI requires at least 12 characters, uppercase and lowercase letters, a number, and a symbol, within bcrypt's 72-byte limit. The account must change this password at first login.
 
 The command refuses if an administrator or the specified email already exists, and writes an audit event when it succeeds. Additional administrators are managed through the application. Do not run `db:seed` in production; the README's demo login details are only for seeded development environments.
 

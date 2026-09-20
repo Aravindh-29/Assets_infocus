@@ -140,11 +140,14 @@ Then run from the repository root, in PowerShell or Bash:
 
 ```sh
 node --env-file=backend/.env.setup-test --test scripts/tests/setup-db.test.mjs
+node --env-file=backend/.env.setup-test --import tsx --test scripts/tests/installer-admin.test.mjs
 ```
 
 Set `PSQL_BIN` in that file if your client is not in the standard PostgreSQL 17 Windows location or on PATH. Do not paste a real password into the command line or commit the environment file. This test creates unique `infocus_setup_<random>_test` and `infocus_foreign_<random>_test` databases and `infocus_owner_<random>` / `infocus_runtime_<random>` roles; its cleanup removes those fixtures after verifying their generated names and database ownership. It does not target `asset_management`, `asset_management_test`, or any existing application data. If the process is forcibly terminated, inspect the generated fixture names before manually cleaning up anything left behind.
 
 Unlike the application integration suite, these disposable setup fixtures deliberately alter a trigger, grants, ownership, and a migration record to verify that setup refuses unsafe configurations. Those checks occur only inside the newly created temporary databases, and each altered fixture is restored before cleanup.
+
+The installer-admin suite uses a separate `infocus_installer_<random>_test` database and `infocus_inst_owner_<random>` / `infocus_inst_runtime_<random>` roles, with the same guarded cleanup. It checks automatic account creation with restricted database permissions, conflicting identifiers, concurrent reruns, real username login, mandatory password change, and preservation of changed passwords and disabled accounts.
 
 ## Apply migrations
 
@@ -163,7 +166,11 @@ For an installer-managed server, prefer rerunning `scripts/install.sh` from the 
 
 ## First production administrator
 
-Create an empty target database, apply migrations, then run from `backend`:
+The full Ubuntu/Debian installer automatically creates the first administrator after applying and verifying migrations, only if no administrator exists. Its login is username **`amdin`** and temporary password **`Admin@123`**. A password change is required at first login. The account has placeholder email `amdin@infocus.invalid`, which cannot receive password-reset messages; email recovery requires a deliverable account address and configured SMTP.
+
+Installer reruns preserve existing administrators and passwords, including disabled accounts. They neither reset passwords nor create another administrator when any administrator already exists. A reserved-username/email or employee-ID collision fails without altering that account. Creation and its audit record run in one transaction, with a database advisory lock shared with manual first-admin creation to serialize concurrent attempts.
+
+The standalone `setup-db.sh`/`setup-db.mjs` helper still creates **no application accounts**. For a manual deployment without the full installer, create the target database, apply migrations, then run from `backend`:
 
 ```sh
 npm run admin:create
@@ -177,11 +184,11 @@ docker compose run --rm migrate npm run admin:create
 
 That service uses the build image, which includes the bootstrap script and TypeScript runner. The smaller application runtime image contains compiled server code and production dependencies only.
 
-For the Ubuntu/Debian installer, use the environment-aware first-admin command in [deployment instructions](DEPLOYMENT.md#4-create-the-first-administrator). It loads `/etc/infocus-assets/app.env` and runs as the service user; it does not rely on a developer `.env` file.
+The installer does not require this manual command. If a manual first-admin command is needed on an installer-managed server with no administrator, use its environment-aware form in [deployment instructions](DEPLOYMENT.md#4-create-the-first-administrator). It loads `/etc/infocus-assets/app.env` and runs as the service user; it does not rely on a developer `.env` file.
 
 The CLI asks for an email, name, and hidden password. The password must contain at least 12 characters including uppercase, lowercase, a number, and a symbol, and fit within bcrypt's 72-byte limit. The account must change its one-time password after signing in.
 
-For non-interactive deployment, inject `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` through the deployment secret manager. Do not put the password in a command-line argument, committed file, shell history, build log, or persistent container definition. Remove those one-time values after completion. The CLI never prints the password/hash, creates an audit entry, and refuses if any administrator or the requested email already exists. Additional administrators are managed through the application.
+For non-interactive use of the **manual** CLI, inject `ADMIN_EMAIL`, `ADMIN_NAME`, and `ADMIN_PASSWORD` through the deployment secret manager. Do not put that chosen password in a command-line argument, committed file, shell history, build log, or persistent container definition. Remove those one-time values after completion. The manual CLI never prints the password/hash, creates an audit entry, and refuses if any administrator or the requested email already exists. The full installer uses its explicit temporary credentials instead and prints them only after successful application verification. Additional administrators are managed through the application.
 
 Never run demo seeds in production. Development example credentials are not production credentials.
 

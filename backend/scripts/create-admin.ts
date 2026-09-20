@@ -128,7 +128,8 @@ async function main() {
   try {
     await prisma.$transaction(
       async (tx) => {
-        // Serialize concurrent bootstrap attempts without introducing persistent state.
+        // Share the installer's lock. READ COMMITTED sees the preceding
+        // bootstrap's committed administrator after waiting for this lock.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(73003812)`;
         if (await tx.user.count({ where: { role: 'ADMIN' } })) {
           throw new BootstrapError(
@@ -161,7 +162,7 @@ async function main() {
           },
         });
       },
-      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15000 },
+      { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15000 },
     );
     console.log(
       'Administrator created. Sign in and change the one-time password before using the application.',

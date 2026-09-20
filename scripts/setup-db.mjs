@@ -286,7 +286,7 @@ No demo data or administrator is seeded automatically.`);
       const recorded = query(
         'SELECT migration_name FROM public."_prisma_migrations" WHERE rolled_back_at IS NULL ORDER BY started_at;',
       )
-        .split('\n')
+        .split(/\r?\n/)
         .filter(Boolean);
       if (!recorded.length || recorded.some((name) => !committed.has(name))) {
         fail(

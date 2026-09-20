@@ -103,7 +103,7 @@ For local sample data, run this **after** setup:
 npm.cmd run db:seed
 ```
 
-Seeding is optional. Without it, create the first administrator using `npm.cmd run admin:create -w backend`. For a production deployment, use that administrator bootstrap and never run the demo seed.
+Seeding is optional. Without it, create the first local administrator using `npm.cmd run admin:create -w backend`. The full Linux installer creates its first administrator automatically as described below. Never run the demo seed in production.
 
 ## 4. Start the application
 
@@ -146,7 +146,7 @@ The seed creates 10 employees, 20 assets, 5 categories, 4 departments, 3 locatio
 
 ## Features
 
-- Email/employee-ID login, refresh sessions, role-based permissions, account management, password changes and recovery.
+- Username/email/employee-ID login, refresh sessions, role-based permissions, account management, password changes and recovery.
 - Asset inventory with search, filters, pagination, sorting, column visibility, selection, and exports.
 - Registration, assignment, transfer, return, location movement, controlled status transitions, soft deletion/restoration.
 - Employee profiles with current equipment and custody history; offboarding with outstanding-item checks.
@@ -191,7 +191,7 @@ npm.cmd run test:e2e
 
 The setup helper creates the missing test database and schema; `db:test:setup` applies migrations and seeds the existing test database. Integration tests start their own API on a random loopback port. Their unique fixtures remain in the isolated test database so immutable history does not need to be deleted. Browser tests start a separate test API on 5001 and frontend on 5174, and use the test database. They create clearly identified test records. Browser installation/setup is described in the [verification document](docs/VERIFICATION.md).
 
-The database-setup script also has an opt-in PostgreSQL test suite, enabled with `SETUP_DB_TEST_ADMIN_URL`. It creates uniquely named fixture databases/roles and removes those fixtures afterward; it does not use the real application database. See [setup-helper tests](docs/DATABASE.md#testing-the-setup-helper) for the protected configuration and invocation.
+The database setup and installer-admin bootstrap also have opt-in PostgreSQL test suites, enabled with `SETUP_DB_TEST_ADMIN_URL`. They create uniquely named fixture databases/roles and remove those fixtures afterward; they do not use the real application database. See [setup-helper tests](docs/DATABASE.md#testing-the-setup-helper) for the protected configuration and invocation.
 
 `npm run build` creates `backend/dist` and `frontend/dist`. `npm start` runs only the compiled API; it does not serve the frontend. Use the Linux installer/Nginx deployment below for the complete production application.
 
@@ -236,13 +236,24 @@ With the wizard's default HTTPS choice, the first installation requests a truste
 
 ## Production bootstrap
 
-Use a clean database, apply migrations, and create the first administrator from the backend maintenance workspace:
+The full `sudo bash install.sh` installation creates the first administrator automatically when the application has no administrator account:
+
+| Login field        | Initial value |
+| ------------------ | ------------- |
+| Username           | `amdin`       |
+| Temporary password | `Admin@123`   |
+
+The username is **`amdin`**, exactly as shown. Sign in at [https://assets.infocuscs.com/login](https://assets.infocuscs.com/login) after installation succeeds. You must change the temporary password before using the application. The replacement password must contain at least 10 characters, including uppercase, lowercase, a number, and a symbol, and fit within bcrypt's 72-byte limit.
+
+Rerunning the installer preserves every existing administrator and password, including disabled administrators; it does not reset them to these defaults. An existing administrator means no new account is created. Username or reserved-email conflicts stop setup without taking over an existing account. The standalone `setup-db.sh`/`setup-db.mjs` database helper creates no application account or demo data.
+
+For manual deployments without the full installer, apply migrations and create the first administrator from the backend maintenance workspace:
 
 ```powershell
 npm.cmd run admin:create -w backend
 ```
 
-The command prompts for the admin identity and a hidden strong password, refuses to overwrite existing administrators, records an audit event, and requires a password change at first login. Production requires HTTPS for secure session cookies, strong environment secrets, SMTP for recovery, backup/restore planning, and a database account with only the application permissions it needs. For an installer-managed server use the environment-aware command in [deployment instructions](docs/DEPLOYMENT.md), which also covers optional Docker Compose.
+The manual command prompts for the admin identity and a hidden strong password, refuses to overwrite existing administrators, records an audit event, and requires a password change at first login. Production requires HTTPS for secure session cookies, strong environment secrets, SMTP for recovery, backup/restore planning, and a database account with only the application permissions it needs. See [deployment instructions](docs/DEPLOYMENT.md#4-create-the-first-administrator) for installer behavior and the optional manual command, as well as the Docker Compose deployment path.
 
 ## Troubleshooting
 

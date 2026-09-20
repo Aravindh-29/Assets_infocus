@@ -63,7 +63,9 @@ Without --letsencrypt, HTTPS initially uses a self-signed certificate (browser w
 After adding DNS, rerun with --letsencrypt. Existing trusted certificates persist.
 Reruns preserve credentials, migrate forward, build a new release, and restart the app.
 The database is asset_management; dedicated roles are infocus_assets_owner and infocus_assets.
-No sample data or administrator is created. See docs/DEPLOYMENT.md for first-admin bootstrap.
+No sample inventory is created. With no administrator, setup creates username
+amdin and temporary password Admin@123, requiring a password change at first login.
+Existing administrators and passwords are preserved on reruns.
 HELP
 }
 while (($#)); do
@@ -182,10 +184,10 @@ Hostname: ${DOMAIN:-<prompt or existing hostname>}; HTTPS: $(if $LETSENCRYPT; th
 3. Preserve or generate separate runtime/migration database credentials and JWT secrets.
 4. Build a new non-root release under $ROOT/releases with CPU/memory/I/O limits; never copy local .env or node_modules.
 5. Create database asset_management only if absent; verify owner/role/schema; deploy Prisma migrations.
-6. Restrict runtime role to application DML; point systemd at the verified release on loopback.
-7. Add $SITE: frontend at /, API at /api/, HTTP redirects to HTTPS.
+6. Restrict runtime role to application DML; create the requested first administrator only when none exists.
+7. Point systemd at the verified release on loopback; add $SITE with frontend at /, API at /api/, and HTTPS redirects.
 8. Validate Nginx before graceful reload; retain existing site ordering and verify API/database and HTTPS SPA routes locally without DNS.
-9. Keep previous releases and credentials. Print first-administrator and DNS next steps.
+9. Keep previous releases and existing credentials; print login details after verification.
 API port: ${REQUESTED_PORT:-5000 (or existing; next free on first install)}; PostgreSQL port: ${DB_PORT:-auto-detect local cluster}.
 PLAN
   exit 0
@@ -440,6 +442,13 @@ env -i PATH="$PATH" HOME=/root bash "$RELEASE/scripts/setup-db.sh" --env-file "$
 # Prevent the running service from modifying its executable code. Nginx must traverse/read static files.
 chown -R root:root "$RELEASE"
 chmod -R a+rX,go-w "$RELEASE"
+info 'Ensuring the first administrator exists without changing existing accounts.'
+ADMIN_BOOTSTRAP_STATUS=$(runuser -u "$APP" -- env -i HOME=/var/lib/infocus-assets PATH="$PATH" "$NODE" --env-file="$ENV_FILE" "$RELEASE/node_modules/tsx/dist/cli.mjs" "$RELEASE/backend/scripts/bootstrap-installer-admin.ts")
+case "$ADMIN_BOOTSTRAP_STATUS" in
+  created) info 'Created installer administrator amdin; a password change is required at first login.';;
+  existing-admin) info 'An administrator already exists; existing accounts and passwords were preserved.';;
+  *) die 'Unexpected administrator setup result; installation stopped before switching the running release.';;
+esac
 
 info 'Installing the managed systemd service and verifying the application.'
 PREVIOUS=''
@@ -641,7 +650,9 @@ printf 'Add your DNS A/AAAA record to this server. Expose TCP 80/443; keep Postg
 if [[ "$CERT" == "$TLS_DIR/cert.pem" ]]; then
   printf 'HTTPS currently uses a self-signed certificate. After DNS, rerun sudo bash install.sh and choose trusted HTTPS. No email is required.\n'
 fi
-printf '\nCreate the first administrator (no demo accounts are installed):\n'
-printf '  cd %s/current/backend\n' "$ROOT"
-printf '  sudo -u %s %s/bin/node --env-file=%s %s/current/node_modules/tsx/dist/cli.mjs %s/current/backend/scripts/create-admin.ts\n' "$APP" "$ROOT" "$ENV_FILE" "$ROOT" "$ROOT"
+if [[ "$ADMIN_BOOTSTRAP_STATUS" == created ]]; then
+  printf '\nAdministrator login: https://%s/login\nUsername: amdin\nTemporary password: Admin@123\nChange this password when prompted at first login.\n' "$DOMAIN"
+else
+  printf '\nUse your existing administrator login. The installer did not reset any password.\n'
+fi
 printf '\nBack up PostgreSQL and %s before upgrades. Old releases are retained; migrations are never reversed automatically.\n' "$CONFIG"
